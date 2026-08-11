@@ -8,13 +8,9 @@ WoWInterpreter 由游戏内插件和 Windows 托盘程序组成。插件把聊�
 
 ## 演示
 
-<p align="center">
-  <img src="assets/demo.gif" alt="WoWInterpreter 英语与简体中文翻译演示">
-</p>
+![WoWInterpreter 英语与简体中文翻译演示](./assets/WoWInterpreter.gif)
 
-<p align="center">
-  <em>在《魔兽世界》经典怀旧服中实现英语 ↔ 简体中文实时交流。</em>
-</p>
+*在《魔兽世界》经典怀旧服中实现英语 ↔ 简体中文实时交流。*
 
 上面的演示展示了 WoWInterpreter 如何在游戏过程中翻译玩家之间的交流。游戏内插件与 Windows 翻译桥接程序进行通信，翻译后的消息会直接显示在 WoWInterpreter 覆盖窗口中。
 
