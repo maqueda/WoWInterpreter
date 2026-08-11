@@ -6,6 +6,18 @@
 
 WoWInterpreter combines a World of Warcraft addon with a small Windows tray application. The addon transports chat text to the Windows bridge, the bridge translates between English and Simplified Chinese, and the result is shown in a scrollable overlay.
 
+## Demo
+
+<p align="center">
+  <img src="assets/demo.gif" alt="WoWInterpreter English to Simplified Chinese translation demo">
+</p>
+
+<p align="center">
+  <em>Real-time English ↔ Simplified Chinese communication in World of Warcraft Classic.</em>
+</p>
+
+The demo above shows WoWInterpreter translating player communication directly while playing. The in-game addon communicates with the Windows translation bridge, and the translated message is displayed in the WoWInterpreter overlay.
+
 ## Features
 
 - English → Simplified Chinese and Simplified Chinese → English.
