@@ -1,0 +1,38 @@
+name: Bug report
+description: Report a reproducible WoWInterpreter problem
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: WoWInterpreter version
+      placeholder: "2.1.4"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: dropdown
+    id: grid
+    attributes:
+      label: Does the KT06 grid appear?
+      options: ["Yes", "No", "Not sure"]
+  - type: textarea
+    id: log
+    attributes:
+      label: Relevant diagnostic log
+      description: Review the log and remove private chat text before posting.

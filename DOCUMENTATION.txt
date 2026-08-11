@@ -1,0 +1,16 @@
+WoWInterpreter 2.1.4 user documentation - filename compatibility fix
+
+Installed documentation files use ASCII-only physical filenames:
+- WoWInterpreter-2.1.4-User-Guide-English.docx
+- WoWInterpreter-2.1.4-User-Guide-Chinese-Simplified.docx
+
+This avoids ZIP/Windows/Inno Setup filename encoding problems.
+
+The visible Start Menu shortcut remains translated:
+- User Guide - English
+- 用户指南 - 简体中文
+
+The Chinese document CONTENT is still fully Simplified Chinese; only its
+physical filename was changed.
+
+No functional WoWInterpreter/Bridge/addon code was changed.

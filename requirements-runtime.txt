@@ -1,0 +1,7 @@
+Pillow
+pyperclip
+transformers
+sentencepiece
+torch
+sacremoses
+pystray

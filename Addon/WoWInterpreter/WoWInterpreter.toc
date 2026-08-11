@@ -1,0 +1,5 @@
+## Interface: 11402
+## Title: WoWInterpreter Hybrid
+## Notes: Incoming/outgoing English to Simplified Chinese translator
+## Version: 2.0.0
+WoWInterpreter.lua

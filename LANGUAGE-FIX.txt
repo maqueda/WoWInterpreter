@@ -1,0 +1,21 @@
+Language build fix
+
+Cause:
+The installed Inno Setup 6 does not contain the optional
+Languages\ChineseSimplified.isl file, so the previous installer definition
+could not compile.
+
+Fix:
+Both language entries now use Inno Setup's guaranteed Default.isl base.
+WoWInterpreter's own installer pages/messages still use the existing
+[CustomMessages] English and chinesesimplified translations, so selecting
+Simplified Chinese translates the WoWInterpreter-specific AddOns selection
+instructions and options without depending on an optional external .isl file.
+
+This guarantees build_release.bat can compile on a standard Inno Setup 6
+installation.
+
+Note:
+Generic built-in Inno wizard chrome remains English with this compatibility
+fallback. A future package can bundle a complete third-party Simplified Chinese
+.isl if full translation of every generic Inno Setup button/page is desired.

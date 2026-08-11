@@ -1,0 +1,9 @@
+WoWInterpreter 2.1.4 - Stable Release
+
+Validated release version: 2.1.4
+
+Final installer:
+  installer\WoWInterpreter-2.1.4-Setup.exe
+
+The installer reports AppVersion 2.1.4 and uses the matching filename.
+No functional code was changed from the validated v2.1.4 build.

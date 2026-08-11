@@ -1,0 +1,39 @@
+WoWInterpreter 2.1.4 - PIL Image Runtime Fix
+
+Confirmed installed-runtime error:
+  NameError: name 'Image' is not defined
+
+Cause:
+adaptive_calibrate() uses:
+  Image.Resampling.NEAREST
+but bridge.py imported only ImageGrab.
+
+Fix:
+  from PIL import Image, ImageGrab
+
+Reviewed Bridge external symbols/imports:
+- PIL.Image / PIL.ImageGrab
+- pyperclip
+- tkinter / ScrolledText
+- threading / deque
+- transformers
+- torch
+
+PIL.Image was already explicitly included in the PyInstaller build, so no new
+packaging dependency is required.
+
+All v2.1.3 release fixes are retained:
+- package dist-info metadata required by transformers
+- pruning only deep non-runtime metadata subtrees
+- short C:\WI21\stage installer path
+- Torch development header/CMake cleanup
+- full English / Simplified Chinese installer
+- internal --bridge child mode and persistent bridge logging
+
+After build/install, test:
+/wi this is a test
+
+Expected log progression:
+[BRIDGE] Module imports complete.
+[BRIDGE] Loading NLLB model: facebook/nllb-200-distilled-600M
+[BRIDGE] NLLB ready.
