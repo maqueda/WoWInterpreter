@@ -112,3 +112,11 @@ WoWInterpreter 是独立社区项目，与 Blizzard Entertainment、Meta、Huggi
 ## 许可证
 
 本仓库中的 WoWInterpreter 原创源代码使用 MIT License。第三方库和 NLLB 模型继续适用各自的许可证。请查看 `LICENSE` 和 `THIRD_PARTY_NOTICES.md`。
+
+## 代码签名
+
+WoWInterpreter 使用 SignPath.io 提供的免费开源代码签名服务，证书由 SignPath Foundation 提供。
+
+完整的代码签名政策、团队角色和隐私政策请参阅英文 README：
+
+[Code signing policy](README.md#code-signing-policy)
