@@ -3,6 +3,8 @@ from pathlib import Path
 from PIL import Image, ImageGrab
 import pyperclip
 
+from Bridge.kt07_tracker import KT07GeometryTracker
+
 MAX_BYTES=180
 COLS=32
 MAGIC=[75,84,48,55]
@@ -845,133 +847,276 @@ def _grab_kt07_region():
 
 def worker():
  print("WoWInterpreter Bridge 2.1.34",flush=True)
- print("KT07 stable baseline + explicit overlay-close process shutdown.",flush=True)
- last=None; last_diag=0.0; locked_geo=None; lock_deadline=0.0; debug_saved=False
+ print("KT07 adaptive validated geometry tracking.",flush=True)
+
+ last=None
+ last_diag=0.0
+ debug_saved=False
+
+ tracker=KT07GeometryTracker(
+  local_after=2,
+  unlock_after=5,
+  exhaustive_after=9,
+ )
+
+ # Anchor information is a calibration hint only.
+ # It is NEVER sufficient to lock geometry.
+ anchor_box=None
+ anchor_pitch=None
 
  def diag(msg):
   nonlocal last_diag
   now=time.time()
   if now-last_diag>=5:
-   print("[CAPTURE] "+msg,flush=True); last_diag=now
+   print("[CAPTURE] "+msg,flush=True)
+   last_diag=now
 
- print(f"[CAPTURE] Screen size: {rootui.winfo_screenwidth()}x{rootui.winfo_screenheight()}",flush=True)
- print(f"[CAPTURE] KT07 ROI: {KT07_CAPTURE_BOX}; idle={KT07_IDLE_INTERVAL:.2f}s active={KT07_ACTIVE_INTERVAL:.3f}s",flush=True)
- print("[CAPTURE] Waiting for KT07 RGB/YCM anchor...",flush=True)
+ print(
+  f"[CAPTURE] Screen size: "
+  f"{rootui.winfo_screenwidth()}x{rootui.winfo_screenheight()}",
+  flush=True,
+ )
+ print(
+  f"[CAPTURE] KT07 ROI: {KT07_CAPTURE_BOX}; "
+  f"idle={KT07_IDLE_INTERVAL:.2f}s "
+  f"active={KT07_ACTIVE_INTERVAL:.3f}s",
+  flush=True,
+ )
+ print(
+  "[CAPTURE] Waiting for KT07 RGB/YCM anchor...",
+  flush=True,
+ )
 
- # Start Translator means the user intends to translate: preload NLLB now so
- # the first /wi command does not pay model startup cost.
  try:
   print("[BRIDGE] Preloading translator model...",flush=True)
   ensure_model_loaded()
   print("[BRIDGE] Translator ready.",flush=True)
  except Exception as e:
-  # Keep the bridge alive; a later translation can retry through ensure_model_loaded().
-  print("[BRIDGE] Translator preload failed:",repr(e),flush=True)
+  print(
+   "[BRIDGE] Translator preload failed:",
+   repr(e),
+   flush=True,
+  )
 
  while True:
   try:
-   _t=time.perf_counter()
-   if locked_geo is None:
-    im=ImageGrab.grab(bbox=KT07_IDLE_ROI)
-    _perf_add("capture_idle_roi",time.perf_counter()-_t)
-   else:
-    im=ImageGrab.grab()
-    _perf_add("capture_full",time.perf_counter()-_t)
-   now=time.time()
-   geo=None
+   raw=None
+   result=None
 
-   # Once KT07 has been found, reuse the exact geometry for a short grace
-   # period. This removes the race between re-detecting the anchor and reading
-   # a short-lived payload frame.
-   if locked_geo is not None and now < lock_deadline:
-    geo=locked_geo
+   # ---------------------------------------------------------
+   # LOCKED
+   # ---------------------------------------------------------
+   # Once a complete KT07 frame has validated, capture the full
+   # screen and use decode_at() through the tracker's fast path.
+   #
+   # The anchor is not searched again on every frame.
+   # ---------------------------------------------------------
+
+   if tracker.locked:
     _t=time.perf_counter()
-    raw=kt07_payload(im,geo)
-    _perf_add("decode",time.perf_counter()-_t)
-    if raw is None:
-     # Anchor may still be present even if one screenshot caught a transition.
-     _t=time.perf_counter()
-     refreshed=locate_kt07_anchor(im)
-     _perf_add("anchor",time.perf_counter()-_t)
-     if refreshed is not None:
-      locked_geo=refreshed
-      geo=refreshed
-      lock_deadline=now+1.25
-      _t=time.perf_counter()
-    raw=kt07_payload(im,geo)
-    _perf_add("decode",time.perf_counter()-_t)
-   else:
-    raw=None
+    im=ImageGrab.grab()
+    _perf_add(
+     "capture_full",
+     time.perf_counter()-_t,
+    )
+
     _t=time.perf_counter()
-    if fast_locate_kt07_anchor(im):
-     _t=time.perf_counter()
-     im=ImageGrab.grab()
-     _perf_add("capture_payload_full",time.perf_counter()-_t)
-     found=locate_kt07_anchor(im)
-    else:
-     found=None
-    _perf_add("anchor",time.perf_counter()-_t)
-    if found is not None:
-     locked_geo=found
-     geo=found
-     lock_deadline=now+1.25
-     print(f"[KT07] Anchor acquired at {found[3]}, cell={found[2]:.2f}px; geometry locked.",flush=True)
-     # Sample immediately, then take a few rapid fresh screenshots if the
-     # first one lands during a frame transition.
-     _t=time.perf_counter()
-     raw=kt07_payload(im,found)
-     _perf_add("decode",time.perf_counter()-_t)
-     if raw is None:
-      for _ in range(4):
-       time.sleep(.025)
-       _t=time.perf_counter()
-       probe=ImageGrab.grab()
-       _perf_add("capture_full",time.perf_counter()-_t)
-       _t=time.perf_counter()
-       raw=kt07_payload(probe,found)
-       _perf_add("decode",time.perf_counter()-_t)
-       if raw is not None:
-        break
+    result=tracker.decode(
+     im,
+     anchor_box,
+     anchor_pitch,
+    )
+    _perf_add(
+     "decode",
+     time.perf_counter()-_t,
+    )
+
+    raw=result.text
+
+    if result.state=="fast":
      debug_saved=False
 
-   if geo is None:
-    if locked_geo is not None:
-     print("[KT07] Geometry lock expired; reacquiring anchor.",flush=True)
-    locked_geo=None
-    diag("KT07 anchor not found in top-left UI region.")
-    if not debug_saved:
-     save_debug(im,"KT07 anchor not found")
-     debug_saved=True
-   elif raw is None:
-    diag(f"KT07 geometry locked at {geo[3]} but MAGIC/checksum has not validated yet.")
+    elif result.state=="transient":
+     diag(
+      "KT07 validated geometry missed one frame; "
+      "keeping lock."
+     )
+
+    elif result.state=="local-recalibrated":
+     print(
+      "[KT07] Geometry locally recalibrated: "
+      f"{result.geometry}",
+      flush=True,
+     )
+     debug_saved=False
+
+    elif result.state=="local-miss":
+     diag(
+      "KT07 local recalibration missed; "
+      "validated geometry retained temporarily."
+     )
+
+    elif result.state=="unlocked":
+     print(
+      "[KT07] Validated geometry lost after "
+      "repeated decode failures; reacquiring anchor.",
+      flush=True,
+     )
+
+   # ---------------------------------------------------------
+   # UNLOCKED
+   # ---------------------------------------------------------
+   # Cheap tiny ROI first. Only when the RGB/YCM anchor looks
+   # plausible do we pay for a full-screen capture.
+   #
+   # Crucially: finding the anchor DOES NOT lock geometry.
+   # The tracker locks only if decode_near_anchor() validates
+   # the complete KT07 frame.
+   # ---------------------------------------------------------
+
+   else:
+    _t=time.perf_counter()
+    idle_im=ImageGrab.grab(bbox=KT07_IDLE_ROI)
+    _perf_add(
+     "capture_idle_roi",
+     time.perf_counter()-_t,
+    )
+
+    anchor_plausible=fast_locate_kt07_anchor(idle_im)
+
+    if anchor_plausible:
+     _t=time.perf_counter()
+     im=ImageGrab.grab()
+     _perf_add(
+      "capture_payload_full",
+      time.perf_counter()-_t,
+     )
+
+     _t=time.perf_counter()
+     found=locate_kt07_anchor(im)
+     _perf_add(
+      "anchor",
+      time.perf_counter()-_t,
+     )
+
+     if found is not None:
+      ox,oy,cell,box=found
+
+      anchor_box=box
+      anchor_pitch=cell
+
+      _t=time.perf_counter()
+      result=tracker.decode(
+       im,
+       anchor_box,
+       anchor_pitch,
+      )
+      _perf_add(
+       "calibration",
+       time.perf_counter()-_t,
+      )
+
+      raw=result.text
+
+      if result.state in (
+       "calibrated",
+       "exhaustive-calibrated",
+      ):
+       print(
+        "[KT07] Frame validated; geometry locked: "
+        f"{result.geometry}",
+        flush=True,
+       )
+       debug_saved=False
+
+      elif result.state=="calibration-miss":
+       diag(
+        "KT07 anchor found but complete frame "
+        "has not validated yet."
+       )
+
+      elif result.state=="exhaustive-miss":
+       diag(
+        "KT07 exhaustive calibration found no "
+        "valid MAGIC/length/checksum/UTF-8 frame."
+       )
+
+     else:
+      diag(
+       "KT07 anchor prefilter matched but robust "
+       "anchor detection failed."
+      )
+
+    else:
+     im=idle_im
+
+     diag(
+      "KT07 anchor not found in top-left UI region."
+     )
+
+     if not debug_saved:
+      save_debug(
+       im,
+       "KT07 anchor not found",
+      )
+      debug_saved=True
+
+   # ---------------------------------------------------------
+   # VALID TRANSPORT FRAME
+   # ---------------------------------------------------------
 
    if raw:
-    # Extend lock while a valid transport frame is being observed.
-    lock_deadline=time.time()+1.25
     if raw!=last:
-     parts=raw.split("\\t",2)
-     kind,author,msg=parts if len(parts)==3 else ("OUT","",raw)
+     parts=raw.split("\t",2)
+
+     kind,author,msg=(
+      parts
+      if len(parts)==3
+      else ("OUT","",raw)
+     )
+
      if kind=="META":
       events.append(("meta",msg))
      else:
       out,direction=translate_auto(msg)
+
       print("SOURCE:",repr(msg),flush=True)
       print(direction+":",repr(out),flush=True)
+
       if kind=="OUT":
-       pyperclip.copy(out); events.append(("msg_out",("",out,direction)))
+       pyperclip.copy(out)
+       events.append(
+        ("msg_out",("",out,direction))
+       )
+
       elif kind=="CHATOUT":
-       pyperclip.copy(out); events.append(("msg_out",(author,out,direction)))
+       pyperclip.copy(out)
+       events.append(
+        ("msg_out",(author,out,direction))
+       )
+
       else:
-       events.append(("msg_in",(author,out)))
+       events.append(
+        ("msg_in",(author,out))
+       )
+
      last=raw
+
    else:
-    # Allow the same text to be sent again after the frame has genuinely gone.
-    if locked_geo is None:
+    # Only clear duplicate suppression after the validated
+    # transport geometry has genuinely disappeared.
+    if not tracker.locked:
      last=None
 
    _perf_report()
    _cpu_report()
-   time.sleep(.04 if locked_geo is not None else KT07_IDLE_INTERVAL_OPT)
+
+   time.sleep(
+    KT07_ACTIVE_INTERVAL
+    if tracker.locked
+    else KT07_IDLE_INTERVAL_OPT
+   )
+
   except Exception as e:
    print("ERROR:",repr(e),flush=True)
    time.sleep(.3)
