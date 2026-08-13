@@ -1,10 +1,11 @@
 """Resolution-independent KT07 symbol-grid decoder.
 
 The decoder deliberately validates an entire KT07 frame before returning a
-geometry.  Seeing the MAGIC bytes is only a candidate signal; checksum and
+geometry. Seeing the MAGIC bytes is only a candidate signal; checksum and
 UTF-8 validation are required before a geometry can be locked by the caller.
 """
 from dataclasses import dataclass
+import math
 import statistics
 
 MAX_BYTES = 180
@@ -27,28 +28,60 @@ def _classify(value):
     return min(range(4), key=lambda i: abs(value - IDEAL[i]))
 
 
-def _sample_axis(center, pitch):
-    """Return interior sample coordinates, including multipoint sampling at 3px."""
-    half = max(0.25, min(1.25, pitch * 0.24))
-    return (center - half, center, center + half)
+def _safe_pixel_centers(start, end):
+    """Return physical pixels whose centres lie safely inside a logical cell.
+
+    Fractional UI scaling makes logical cell boundaries drift across physical
+    pixels. Sampling fixed offsets around a calculated centre can therefore
+    cross into a neighbour, especially below 3 px. Instead we derive samples
+    from the actual cell interval and keep the most interior physical pixels.
+    """
+    width = end - start
+    if width <= 0:
+        return ()
+
+    # Keep away from boundaries when there is enough room. For very small
+    # cells, cap the margin so at least one physical pixel remains usable.
+    margin = min(width * 0.20, max(0.0, (width - 1.0) / 2.0))
+    inner_start = start + margin
+    inner_end = end - margin
+
+    pixels = []
+    first = max(0, int(math.floor(start)) - 1)
+    last = int(math.ceil(end)) + 1
+    for pixel in range(first, last + 1):
+        center = pixel + 0.5
+        if inner_start <= center < inner_end:
+            pixels.append(pixel)
+
+    if pixels:
+        return tuple(pixels)
+
+    # Degenerate sub-pixel interval: use the physical pixel whose centre is
+    # nearest the logical centre. This is deterministic and never samples a
+    # deliberately chosen boundary point.
+    return (max(0, int(math.floor((start + end) / 2.0))),)
 
 
 def _symbol_value(im, geometry, index):
     col, row = index % COLS, index // COLS
-    cx = geometry.x + (col + 0.5) * geometry.pitch_x
-    cy = geometry.y + (row + 0.5) * geometry.pitch_y
+    x0 = geometry.x + col * geometry.pitch_x
+    x1 = geometry.x + (col + 1) * geometry.pitch_x
+    y0 = geometry.y + row * geometry.pitch_y
+    y1 = geometry.y + (row + 1) * geometry.pitch_y
+
+    xs = _safe_pixel_centers(x0, x1)
+    ys = _safe_pixel_centers(y0, y1)
     values = []
-    seen = set()
-    for sy in _sample_axis(cy, geometry.pitch_y):
-        for sx in _sample_axis(cx, geometry.pitch_x):
-            px, py = int(round(sx)), int(round(sy))
-            if (px, py) in seen:
+    for py in ys:
+        if not 0 <= py < im.height:
+            continue
+        for px in xs:
+            if not 0 <= px < im.width:
                 continue
-            seen.add((px, py))
-            if 0 <= px < im.width and 0 <= py < im.height:
-                r, g, b = im.getpixel((px, py))[:3]
-                if max(r, g, b) - min(r, g, b) < 35:
-                    values.append((r + g + b) // 3)
+            r, g, b = im.getpixel((px, py))[:3]
+            if max(r, g, b) - min(r, g, b) < 35:
+                values.append((r + g + b) // 3)
     return int(statistics.median(values)) if values else None
 
 
@@ -117,7 +150,7 @@ def _refine(im, coarse_geometry, coarse_step=0.25):
 def decode_near_anchor(im, anchor_box, anchor_symbol_pitch=None):
     """Find and fully validate KT07 without assuming resolution or equal X/Y pitch.
 
-    ``anchor_symbol_pitch`` is intentionally only a search-order hint.  The
+    ``anchor_symbol_pitch`` is intentionally only a search-order hint. The
     absolute search remains broad enough to recover when the anchor and payload
     are rasterized at different effective scales.
     """
@@ -140,7 +173,7 @@ def decode_near_anchor(im, anchor_box, anchor_symbol_pitch=None):
                 geometry = Geometry(x, y, pitch_x, pitch_y)
                 if tuple(read_byte(im, geometry, i) for i in range(4)) != MAGIC:
                     continue
-                # MAGIC only earns refinement.  It never locks geometry.
+                # MAGIC only earns refinement. It never locks geometry.
                 refined = _refine(im, geometry, step)
                 if refined is not None:
                     return refined
