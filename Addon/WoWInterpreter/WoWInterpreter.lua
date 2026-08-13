@@ -2,24 +2,34 @@ local KT=CreateFrame("Frame","WoWInterpreterFrame",UIParent)
 local MAX_BYTES=180
 local COLS=32
 local CELL=4
-local MAGIC={75,84,48,54} -- KT06
+local ANCHOR_H=8
+local MAGIC={75,84,48,55} -- KT07
 local levels={0.12,0.36,0.64,0.88}
 local FRAME_BYTES=5+MAX_BYTES+1
 local DATA_CELLS=FRAME_BYTES*4
 local ROWS=math.ceil(DATA_CELLS/COLS)
 local cells={}
 
-KT:SetSize(COLS*CELL+4,ROWS*CELL+4)
+KT:SetSize(COLS*CELL+4,ROWS*CELL+4+ANCHOR_H)
 KT:SetPoint("TOPLEFT",UIParent,"TOPLEFT",2,-2)
 KT:SetFrameStrata("TOOLTIP")
 KT:Hide()
 
 local bg=KT:CreateTexture(nil,"BACKGROUND")
-bg:SetAllPoints(); bg:SetColorTexture(1,0,1,1) -- magenta locator border
+bg:SetAllPoints(); bg:SetColorTexture(0,0,0,1)
+
+-- KT07: deterministic RGB/YCM visual anchor. World colours are irrelevant.
+local anchorColors={{1,0,0},{0,1,0},{0,0,1},{1,1,0},{0,1,1},{1,0,1}}
+for i,c in ipairs(anchorColors) do
+ local a=KT:CreateTexture(nil,"OVERLAY")
+ a:SetSize(ANCHOR_H,ANCHOR_H)
+ a:SetPoint("TOPLEFT",KT,"TOPLEFT",2+(i-1)*ANCHOR_H,-2)
+ a:SetColorTexture(c[1],c[2],c[3],1)
+end
 
 local inner=CreateFrame("Frame",nil,KT)
 inner:SetSize(COLS*CELL,ROWS*CELL)
-inner:SetPoint("TOPLEFT",KT,"TOPLEFT",2,-2)
+inner:SetPoint("TOPLEFT",KT,"TOPLEFT",2,-(2+ANCHOR_H))
 
 for i=1,COLS*ROWS do
  local t=inner:CreateTexture(nil,"OVERLAY")
@@ -282,7 +292,7 @@ local function setIncomingMode(mode)
 end
 
 local function printHelp()
- print("|cff33ff99WoWInterpreter v2.0|r - English <-> Simplified Chinese")
+ print("|cff33ff99WoWInterpreter v2.1.34|r - English <-> Simplified Chinese")
  print("|cffffff00/wi <text>|r - translate text")
  print("|cffffff00/wi last|r - translate latest received message")
  print("|cffffff00/wi list|r - choose a recent message")
