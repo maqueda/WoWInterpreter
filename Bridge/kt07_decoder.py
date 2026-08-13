@@ -28,23 +28,18 @@ def _classify(value):
 
 
 def _safe_pixel_centers(start, end):
-    """Return physical pixels whose centres lie safely inside a logical cell."""
     width = end - start
     if width <= 0:
         return ()
     margin = min(width * 0.20, max(0.0, (width - 1.0) / 2.0))
-    inner_start = start + margin
-    inner_end = end - margin
+    inner_start, inner_end = start + margin, end - margin
     pixels = []
-    first = max(0, int(math.floor(start)) - 1)
-    last = int(math.ceil(end)) + 1
+    first, last = max(0, int(math.floor(start)) - 1), int(math.ceil(end)) + 1
     for pixel in range(first, last + 1):
         center = pixel + 0.5
         if inner_start <= center < inner_end:
             pixels.append(pixel)
-    if pixels:
-        return tuple(pixels)
-    return (max(0, int(math.floor((start + end) / 2.0))),)
+    return tuple(pixels) if pixels else (max(0, int(math.floor((start + end) / 2.0))),)
 
 
 def _symbol_value(im, geometry, index):
@@ -66,6 +61,31 @@ def _symbol_value(im, geometry, index):
     return int(statistics.median(values)) if values else None
 
 
+def _quick_symbol(im, geometry, index):
+    """One-pixel interior probe used only to reject impossible candidates.
+
+    A hit is never trusted: every surviving candidate is re-read by the robust
+    multipoint sampler and must pass the complete KT07 frame validation.
+    """
+    col, row = index % COLS, index // COLS
+    cx = geometry.x + (col + 0.5) * geometry.pitch_x
+    cy = geometry.y + (row + 0.5) * geometry.pitch_y
+    px, py = int(math.floor(cx)), int(math.floor(cy))
+    if not (0 <= px < im.width and 0 <= py < im.height):
+        return None
+    r, g, b = im.getpixel((px, py))[:3]
+    if max(r, g, b) - min(r, g, b) >= 35:
+        return None
+    return _classify((r + g + b) // 3)
+
+
+def _quick_magic_prefix(im, geometry):
+    # First byte 75 == base4 digits 1,0,2,3. Two well-separated digits are a
+    # cheap discriminator. False positives are harmless because robust MAGIC,
+    # checksum and UTF-8 validation still follow.
+    return _quick_symbol(im, geometry, 0) == 1 and _quick_symbol(im, geometry, 3) == 3
+
+
 def read_byte(im, geometry, byte_index):
     digits = [_classify(_symbol_value(im, geometry, byte_index * 4 + i)) for i in range(4)]
     if any(digit is None for digit in digits):
@@ -74,7 +94,6 @@ def read_byte(im, geometry, byte_index):
 
 
 def _has_magic(im, geometry):
-    """Cheap progressive MAGIC rejection for calibration searches."""
     for index, expected in enumerate(MAGIC):
         if read_byte(im, geometry, index) != expected:
             return False
@@ -82,7 +101,6 @@ def _has_magic(im, geometry):
 
 
 def decode_at(im, geometry):
-    """Fast path: decode a completely valid KT07 frame at a known geometry."""
     if not _has_magic(im, geometry):
         return None
     length = read_byte(im, geometry, 4)
@@ -108,21 +126,17 @@ def _frange(start, stop, step):
 
 
 def _ordered_pitches(anchor_symbol_pitch, exhaustive):
-    """Search likely scale first; broad fallback is explicit and infrequent."""
     step = 0.25
     if anchor_symbol_pitch:
         hint = float(anchor_symbol_pitch)
-        local_min = max(1.75, hint - 1.5)
-        local_max = min(10.0, hint + 1.5)
-        local = list(_frange(local_min, local_max, step))
+        local = list(_frange(max(1.75, hint - 1.5), min(10.0, hint + 1.5), step))
         local.sort(key=lambda value: abs(value - hint))
     else:
         local = list(_frange(1.75, 6.0, step))
     if not exhaustive:
         return local
     broad = list(_frange(1.75, 10.0, step))
-    broad.sort(key=lambda value: (0 if value in local else 1,
-                                  abs(value - float(anchor_symbol_pitch or 4.0))))
+    broad.sort(key=lambda value: (0 if value in local else 1, abs(value - float(anchor_symbol_pitch or 4.0))))
     return broad
 
 
@@ -140,10 +154,8 @@ def _candidate_origins(anchor_box, exhaustive):
 
 
 def _refine(im, coarse_geometry, coarse_step=0.25):
-    """Sub-pixel refinement around MAGIC candidate; checksum chooses winner."""
     offsets = (-0.5, -0.25, 0.0, 0.25, 0.5)
-    pitch_offsets = (-coarse_step, -coarse_step / 2, 0.0,
-                     coarse_step / 2, coarse_step)
+    pitch_offsets = (-coarse_step, -coarse_step / 2, 0.0, coarse_step / 2, coarse_step)
     for dpy in pitch_offsets:
         py = coarse_geometry.pitch_y + dpy
         if py < 1.5:
@@ -154,8 +166,7 @@ def _refine(im, coarse_geometry, coarse_step=0.25):
                 continue
             for dy in offsets:
                 for dx in offsets:
-                    geometry = Geometry(coarse_geometry.x + dx,
-                                        coarse_geometry.y + dy, px, py)
+                    geometry = Geometry(coarse_geometry.x + dx, coarse_geometry.y + dy, px, py)
                     decoded = decode_at(im, geometry)
                     if decoded is not None:
                         return decoded, geometry
@@ -163,41 +174,28 @@ def _refine(im, coarse_geometry, coarse_step=0.25):
 
 
 def _pitch_pairs(pitches, anchor_symbol_pitch):
-    """Yield likely X/Y pitch pairs first without a quadratic full cross-product.
-
-    UI scaling can make X/Y differ slightly, but large independent differences
-    are not useful live candidates.  We therefore walk a narrow diagonal band
-    around each pitch.  Exhaustive recovery can still use the wider pitch list.
-    """
     pitch_set = set(pitches)
     deltas = (0.0, -0.25, 0.25, -0.5, 0.5, -0.75, 0.75)
     pairs = []
     for pitch_y in pitches:
         for delta in deltas:
             pitch_x = round(pitch_y + delta, 4)
-            if pitch_x not in pitch_set:
-                continue
-            pair = (pitch_x, pitch_y)
-            if pair not in pairs:
-                pairs.append(pair)
+            if pitch_x in pitch_set and (pitch_x, pitch_y) not in pairs:
+                pairs.append((pitch_x, pitch_y))
     hint = float(anchor_symbol_pitch or 4.0)
-    pairs.sort(key=lambda pair: (abs(pair[0] - pair[1]),
-                                 abs(pair[0] - hint) + abs(pair[1] - hint)))
+    pairs.sort(key=lambda pair: (abs(pair[0] - pair[1]), abs(pair[0] - hint) + abs(pair[1] - hint)))
     return pairs
 
 
 def decode_near_anchor(im, anchor_box, anchor_symbol_pitch=None, exhaustive=False):
-    """Calibrate KT07 near an anchor without assuming monitor resolution.
-
-    Normal calls are deliberately bounded for live CPU safety. ``exhaustive``
-    enables a wider recovery search and is intended only for occasional
-    recalibration, never every capture frame.
-    """
+    """Calibrate KT07 near an anchor without assuming monitor resolution."""
     pitches = _ordered_pitches(anchor_symbol_pitch, exhaustive)
     origins = tuple(_candidate_origins(anchor_box, exhaustive))
     for pitch_x, pitch_y in _pitch_pairs(pitches, anchor_symbol_pitch):
         for x, y in origins:
             geometry = Geometry(x, y, pitch_x, pitch_y)
+            if not _quick_magic_prefix(im, geometry):
+                continue
             if not _has_magic(im, geometry):
                 continue
             refined = _refine(im, geometry, 0.25)
