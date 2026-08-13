@@ -20,8 +20,8 @@ All notable WoWInterpreter changes are documented here.
 ## [2.1.4] - 2026-08-11
 
 ### Stable release
-- Validated complete Windows installer â†’ tray â†’ Bridge â†’ KT06 â†’ NLLB â†’ overlay translation flow.
-- English â†” Simplified Chinese translation.
+- Validated complete Windows installer → tray → Bridge → KT06 → NLLB → overlay translation flow.
+- English ↔ Simplified Chinese translation.
 - Scrollable translation overlay and recent-message workflow.
 - `/wi` command family with manual/automatic modes.
 - Windows notification-area Start / Stop / Status / Log / Exit controls.
