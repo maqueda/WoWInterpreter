@@ -1,3 +1,4 @@
+import time
 import unittest
 from PIL import Image, ImageDraw
 
@@ -29,7 +30,8 @@ def render(text, geometry, size=(900, 260)):
         x1 = geometry.x + (col + 1) * geometry.pitch_x
         y1 = geometry.y + (row + 1) * geometry.pitch_y
         level = IDEAL[symbol]
-        draw.rectangle((int(round(x0)), int(round(y0)), int(round(x1)) - 1, int(round(y1)) - 1), fill=(level, level, level))
+        draw.rectangle((int(round(x0)), int(round(y0)), int(round(x1)) - 1,
+                        int(round(y1)) - 1), fill=(level, level, level))
     return image
 
 
@@ -89,13 +91,29 @@ class KT07DecoderTests(unittest.TestCase):
     def test_magic_without_valid_frame_never_passes(self):
         geometry = Geometry(8.0, 12.0, 3.0, 3.0)
         image = render("valid", geometry)
-        # Destroy a payload cell while leaving all four MAGIC bytes untouched.
         payload_symbol = 5 * 4
         col, row = payload_symbol % COLS, payload_symbol // COLS
         x0 = int(round(geometry.x + col * geometry.pitch_x))
         y0 = int(round(geometry.y + row * geometry.pitch_y))
-        ImageDraw.Draw(image).rectangle((x0, y0, x0 + 2, y0 + 2), fill=(224, 224, 224))
+        ImageDraw.Draw(image).rectangle((x0, y0, x0 + 2, y0 + 2),
+                                        fill=(224, 224, 224))
         self.assertIsNone(decode_at(image, geometry))
+
+    def test_locked_fast_path_is_cheap(self):
+        geometry = Geometry(7.0, 10.0, 3.0, 3.0)
+        image = render("fast path", geometry)
+        start = time.perf_counter()
+        for _ in range(100):
+            self.assertEqual("fast path", decode_at(image, geometry))
+        elapsed = time.perf_counter() - start
+        self.assertLess(elapsed, 1.0, f"100 locked decodes took {elapsed:.3f}s")
+
+    def test_bounded_negative_calibration_does_not_run_away(self):
+        image = Image.new("RGB", (360, 260), (8, 8, 8))
+        start = time.perf_counter()
+        self.assertIsNone(decode_near_anchor(image, (7, 1, 43, 7), 3.0))
+        elapsed = time.perf_counter() - start
+        self.assertLess(elapsed, 2.0, f"negative calibration took {elapsed:.3f}s")
 
 
 if __name__ == "__main__":
