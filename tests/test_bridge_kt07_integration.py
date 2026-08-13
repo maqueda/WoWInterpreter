@@ -1,4 +1,4 @@
-﻿import ast
+import ast
 import unittest
 from pathlib import Path
 
@@ -53,6 +53,90 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
         self.assertIn(
             "KT07GeometryTracker",
             imported_names,
+        )
+
+    def test_bridge_imports_adaptive_capture_box(self):
+        imports = [
+            node
+            for node in self.tree.body
+            if isinstance(node, ast.ImportFrom)
+            and node.module == "Bridge.kt07_decoder"
+        ]
+
+        imported_names = {
+            alias.name
+            for node in imports
+            for alias in node.names
+        }
+
+        self.assertIn(
+            "capture_box_for_geometry",
+            imported_names,
+        )
+
+    def test_locked_capture_uses_adaptive_bbox(self):
+        box_calls = [
+            node
+            for node in ast.walk(self.worker)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "capture_box_for_geometry"
+        ]
+
+        self.assertEqual(1, len(box_calls))
+
+        box_call = box_calls[0]
+
+        self.assertEqual(1, len(box_call.args))
+        self.assertIsInstance(
+            box_call.args[0],
+            ast.Attribute,
+        )
+        self.assertIsInstance(
+            box_call.args[0].value,
+            ast.Name,
+        )
+        self.assertEqual(
+            "tracker",
+            box_call.args[0].value.id,
+        )
+        self.assertEqual(
+            "geometry",
+            box_call.args[0].attr,
+        )
+
+        grab_calls = [
+            node
+            for node in ast.walk(self.worker)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "grab"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "ImageGrab"
+        ]
+
+        bbox_grabs = [
+            call
+            for call in grab_calls
+            if any(
+                keyword.arg == "bbox"
+                and isinstance(keyword.value, ast.Name)
+                and keyword.value.id == "locked_box"
+                for keyword in call.keywords
+            )
+        ]
+
+        self.assertEqual(1, len(bbox_grabs))
+
+    def test_locked_path_no_longer_uses_capture_full_metric(self):
+        self.assertNotIn(
+            '"capture_full"',
+            self.worker_source,
+        )
+
+        self.assertIn(
+            '"capture_locked_roi"',
+            self.worker_source,
         )
 
     def test_worker_constructs_geometry_tracker(self):

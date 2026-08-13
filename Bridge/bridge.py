@@ -4,6 +4,7 @@ from PIL import Image, ImageGrab
 import pyperclip
 
 from Bridge.kt07_tracker import KT07GeometryTracker
+from Bridge.kt07_decoder import capture_box_for_geometry
 
 MAX_BYTES=180
 COLS=32
@@ -913,10 +914,21 @@ def worker():
    # ---------------------------------------------------------
 
    if tracker.locked:
+    # Geometry is already fully validated. Capture only the screen-space
+    # region capable of containing the largest legal KT07 frame.
+    #
+    # The adaptive bbox always preserves origin (0, 0), so tracker.geometry
+    # remains in the same coordinate system and needs no translation.
+    locked_box=capture_box_for_geometry(
+     tracker.geometry
+    )
+
     _t=time.perf_counter()
-    im=ImageGrab.grab()
+    im=ImageGrab.grab(
+     bbox=locked_box
+    )
     _perf_add(
-     "capture_full",
+     "capture_locked_roi",
      time.perf_counter()-_t,
     )
 

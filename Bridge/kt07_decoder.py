@@ -21,6 +21,31 @@ class Geometry:
     pitch_y: float
 
 
+def capture_box_for_geometry(geometry, margin=8):
+    """Return a screen-space bbox covering the largest valid KT07 frame.
+
+    The box is derived only from validated geometry and protocol limits, so
+    it scales with DPI/UI scale rather than monitor resolution.
+    """
+    total_bytes = len(MAGIC) + 1 + MAX_BYTES + 1
+    total_symbols = total_bytes * 4
+    rows = math.ceil(total_symbols / COLS)
+
+    # Keep the crop in screen coordinates with origin (0, 0).
+    # This lets the validated Geometry remain unchanged when decoding the
+    # cropped image, while right/bottom still adapt to position and UI scale.
+    left = 0
+    top = 0
+    right = math.ceil(
+        geometry.x + COLS * geometry.pitch_x + margin
+    )
+    bottom = math.ceil(
+        geometry.y + rows * geometry.pitch_y + margin
+    )
+
+    return (left, top, right, bottom)
+
+
 def _classify(value):
     if value is None:
         return None

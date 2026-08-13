@@ -2,7 +2,7 @@ import time
 import unittest
 from PIL import Image, ImageDraw
 
-from Bridge.kt07_decoder import COLS, Geometry, MAGIC, decode_at, decode_near_anchor, has_signal_at
+from Bridge.kt07_decoder import (COLS, Geometry, MAGIC, capture_box_for_geometry, decode_at, decode_near_anchor, has_signal_at)
 
 IDEAL = (31, 92, 163, 224)
 
@@ -36,6 +36,90 @@ def render(text, geometry, size=(900, 260)):
 
 
 class KT07DecoderTests(unittest.TestCase):
+    def test_capture_box_scales_with_geometry(self):
+        small = Geometry(7.5, 16.5, 3.0, 3.0)
+        large = Geometry(7.5, 16.5, 8.0, 7.75)
+
+        small_box = capture_box_for_geometry(small)
+        large_box = capture_box_for_geometry(large)
+
+        self.assertGreater(
+            large_box[2] - large_box[0],
+            small_box[2] - small_box[0],
+        )
+        self.assertGreater(
+            large_box[3] - large_box[1],
+            small_box[3] - small_box[1],
+        )
+
+    def test_capture_box_contains_maximum_frame(self):
+        cases = (
+            Geometry(7.5, 16.5, 2.5, 2.5),
+            Geometry(12.25, 16.5, 3.25, 3.5),
+            Geometry(21.0, 24.0, 6.0, 6.0),
+            Geometry(300.5, 180.25, 8.0, 7.75),
+        )
+
+        total_symbols = (
+            (len(MAGIC) + 1 + 180 + 1) * 4
+        )
+        rows = (total_symbols + COLS - 1) // COLS
+
+        for geometry in cases:
+            with self.subTest(geometry=geometry):
+                left, top, right, bottom = (
+                    capture_box_for_geometry(geometry)
+                )
+
+                self.assertLessEqual(left, geometry.x)
+                self.assertLessEqual(top, geometry.y)
+
+                self.assertGreaterEqual(
+                    right,
+                    geometry.x
+                    + COLS * geometry.pitch_x,
+                )
+                self.assertGreaterEqual(
+                    bottom,
+                    geometry.y
+                    + rows * geometry.pitch_y,
+                )
+
+    def test_origin_preserving_crop_decodes_without_translation(self):
+        geometry = Geometry(
+            120.25,
+            90.5,
+            4.25,
+            4.0,
+        )
+        image = render(
+            "cropped transport",
+            geometry,
+            size=(900, 500),
+        )
+
+        box = capture_box_for_geometry(geometry)
+        cropped = image.crop(box)
+
+        self.assertEqual((0, 0), box[:2])
+        self.assertEqual(
+            "cropped transport",
+            decode_at(cropped, geometry),
+        )
+
+    def test_capture_box_never_uses_negative_origin(self):
+        geometry = Geometry(
+            2.0,
+            3.0,
+            3.0,
+            3.0,
+        )
+
+        box = capture_box_for_geometry(geometry)
+
+        self.assertEqual(0, box[0])
+        self.assertEqual(0, box[1])
+
     def test_exact_geometries(self):
         cases = (
             Geometry(7.0, 12.0, 2.5, 2.5),
