@@ -1,4 +1,4 @@
-# WoWInterpreter
+﻿# WoWInterpreter
 
 **English ↔ Simplified Chinese communication assistant for World of Warcraft Classic Era.**
 
@@ -84,6 +84,14 @@ If the grid appears but no translation is produced, right-click the **WI** tray 
 If CPU usage is not wanted, choose **Stop translator**. This stops the Bridge and translation engine.
 
 See the complete English and Chinese guides in `Documentation/`.
+
+## Development
+
+Interested in contributing to WoWInterpreter or understanding how the project works internally?
+
+See the [Development Guide](Documentation/DEVELOPMENT.md) for a detailed description of the architecture, KT07 visual transport, addon/Bridge protocol, translation pipeline, debugging, performance considerations, Windows builds, testing and release process.
+
+For contribution requirements, also see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Building from source
 
