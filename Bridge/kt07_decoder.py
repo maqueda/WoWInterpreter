@@ -132,8 +132,6 @@ def _candidate_origins(anchor_box, exhaustive):
         x0, x1 = max(0, int(left) - 20), max(1, int(right) + 20)
         y0, y1 = max(0, int(top) - 2), max(1, int(bottom) + 42)
     else:
-        # KT07 payload begins immediately below/around the locator. This is a
-        # locality constraint, not a resolution-specific coordinate.
         x0, x1 = max(0, int(left) - 14), max(1, int(right) + 8)
         y0, y1 = max(0, int(bottom) - 1), max(1, int(bottom) + 22)
     for y in range(y0, y1):
@@ -164,6 +162,30 @@ def _refine(im, coarse_geometry, coarse_step=0.25):
     return None
 
 
+def _pitch_pairs(pitches, anchor_symbol_pitch):
+    """Yield likely X/Y pitch pairs first without a quadratic full cross-product.
+
+    UI scaling can make X/Y differ slightly, but large independent differences
+    are not useful live candidates.  We therefore walk a narrow diagonal band
+    around each pitch.  Exhaustive recovery can still use the wider pitch list.
+    """
+    pitch_set = set(pitches)
+    deltas = (0.0, -0.25, 0.25, -0.5, 0.5, -0.75, 0.75)
+    pairs = []
+    for pitch_y in pitches:
+        for delta in deltas:
+            pitch_x = round(pitch_y + delta, 4)
+            if pitch_x not in pitch_set:
+                continue
+            pair = (pitch_x, pitch_y)
+            if pair not in pairs:
+                pairs.append(pair)
+    hint = float(anchor_symbol_pitch or 4.0)
+    pairs.sort(key=lambda pair: (abs(pair[0] - pair[1]),
+                                 abs(pair[0] - hint) + abs(pair[1] - hint)))
+    return pairs
+
+
 def decode_near_anchor(im, anchor_box, anchor_symbol_pitch=None, exhaustive=False):
     """Calibrate KT07 near an anchor without assuming monitor resolution.
 
@@ -173,16 +195,12 @@ def decode_near_anchor(im, anchor_box, anchor_symbol_pitch=None, exhaustive=Fals
     """
     pitches = _ordered_pitches(anchor_symbol_pitch, exhaustive)
     origins = tuple(_candidate_origins(anchor_box, exhaustive))
-    for pitch_y in pitches:
-        for pitch_x in pitches:
-            ratio = pitch_x / pitch_y
-            if not 0.70 <= ratio <= 1.30:
+    for pitch_x, pitch_y in _pitch_pairs(pitches, anchor_symbol_pitch):
+        for x, y in origins:
+            geometry = Geometry(x, y, pitch_x, pitch_y)
+            if not _has_magic(im, geometry):
                 continue
-            for x, y in origins:
-                geometry = Geometry(x, y, pitch_x, pitch_y)
-                if not _has_magic(im, geometry):
-                    continue
-                refined = _refine(im, geometry, 0.25)
-                if refined is not None:
-                    return refined
+            refined = _refine(im, geometry, 0.25)
+            if refined is not None:
+                return refined
     return None
