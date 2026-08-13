@@ -5,7 +5,7 @@ cd /d "%~dp0"
 set "STAGEROOT=C:\WI21\stage"
 
 echo ============================================================
-echo  WoWInterpreter 2.1.4 - Release Builder
+echo  WoWInterpreter 2.1.34 - Release Builder
 echo ============================================================
 echo.
 
@@ -66,6 +66,17 @@ if not exist "%STAGEROOT%\app\WoWInterpreter.exe" (
 
 echo.
 echo [5/6] Looking for Inno Setup 6...
+
+REM Validate installer documentation inputs before compiling Inno Setup.
+if not exist "Documentation\WoWInterpreter-2.1.34-User-Guide-English.docx" (
+  echo ERROR: Missing English user guide required by installer.
+  exit /b 1
+)
+if not exist "Documentation\WoWInterpreter-2.1.34-User-Guide-Chinese-Simplified.docx" (
+  echo ERROR: Missing Simplified Chinese user guide required by installer.
+  exit /b 1
+)
+
 set "ISCC="
 for %%I in (ISCC.exe) do if not "%%~$PATH:I"=="" set "ISCC=%%~$PATH:I"
 if not defined ISCC if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
@@ -83,7 +94,7 @@ mkdir "installer"
 "%ISCC%" /DStageRoot="%STAGEROOT%" "installer.iss"
 if errorlevel 1 goto :inno_fail
 
-if not exist "installer\WoWInterpreter-2.1.4-Setup.exe" (
+if not exist "installer\WoWInterpreter-2.1.34-Setup.exe" (
   echo ERROR: Setup.exe not found after compilation.
   goto :fail
 )
@@ -96,8 +107,8 @@ echo.
 echo ============================================================
 echo  RELEASE COMPLETE
 echo ============================================================
-echo "%CD%\installer\WoWInterpreter-2.1.4-Setup.exe"
-start "" explorer.exe /select,"%CD%\installer\WoWInterpreter-2.1.4-Setup.exe"
+echo "%CD%\installer\WoWInterpreter-2.1.34-Setup.exe"
+start "" explorer.exe /select,"%CD%\installer\WoWInterpreter-2.1.34-Setup.exe"
 pause
 exit /b 0
 

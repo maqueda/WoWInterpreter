@@ -3,7 +3,7 @@
 #endif
 
 #define MyAppName "WoWInterpreter"
-#define MyAppVersion "2.1.4"
+#define MyAppVersion "2.1.34"
 #define MyAppExeName "WoWInterpreter.exe"
 
 [Setup]
@@ -13,7 +13,7 @@ AppVersion={#MyAppVersion}
 DefaultDirName={localappdata}\Programs\WoWInterpreter
 DefaultGroupName=WoWInterpreter
 OutputDir=installer
-OutputBaseFilename=WoWInterpreter-2.1.4-Setup
+OutputBaseFilename=WoWInterpreter-2.1.34-Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -44,8 +44,8 @@ chinesesimplified.StartWithWindows=Windows 启动时运行 WoWInterpreter
 chinesesimplified.DesktopShortcut=创建桌面快捷方式
 
 [Files]
-Source: "Documentation\WoWInterpreter-2.1.4-User-Guide-English.docx"; DestDir: "{app}\Documentation"; Flags: ignoreversion
-Source: "Documentation\WoWInterpreter-2.1.4-User-Guide-Chinese-Simplified.docx"; DestDir: "{app}\Documentation"; Flags: ignoreversion
+Source: "Documentation\WoWInterpreter-2.1.34-User-Guide-English.docx"; DestDir: "{app}\Documentation"; Flags: ignoreversion
+Source: "Documentation\WoWInterpreter-2.1.34-User-Guide-Chinese-Simplified.docx"; DestDir: "{app}\Documentation"; Flags: ignoreversion
 Source: "{#StageRoot}\app\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#StageRoot}\addon\*"; DestDir: "{code:GetAddonInstallDir}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
@@ -54,8 +54,8 @@ Name: "desktopicon"; Description: "{cm:DesktopShortcut}"; GroupDescription: "Sho
 Name: "autostart"; Description: "{cm:StartWithWindows}"; GroupDescription: "Startup:"; Flags: unchecked
 
 [Icons]
-Name: "{group}\User Guide - English"; Filename: "{app}\Documentation\WoWInterpreter-2.1.4-User-Guide-English.docx"
-Name: "{group}\用户指南 - 简体中文"; Filename: "{app}\Documentation\WoWInterpreter-2.1.4-User-Guide-Chinese-Simplified.docx"
+Name: "{group}\User Guide - English"; Filename: "{app}\Documentation\WoWInterpreter-2.1.34-User-Guide-English.docx"
+Name: "{group}\用户指南 - 简体中文"; Filename: "{app}\Documentation\WoWInterpreter-2.1.34-User-Guide-Chinese-Simplified.docx"
 Name: "{group}\WoWInterpreter"; Filename: "{app}\{#MyAppExeName}"
 Name: "{userdesktop}\WoWInterpreter"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 Name: "{userstartup}\WoWInterpreter"; Filename: "{app}\{#MyAppExeName}"; Tasks: autostart

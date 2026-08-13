@@ -54,10 +54,24 @@ def start(icon,item=None):
                 cmd=[sys.executable,str(Path(__file__).resolve()),"--bridge"]
             bridge_proc=subprocess.Popen(cmd,cwd=str(HERE),creationflags=flags)
             log(f"Bridge child started PID={bridge_proc.pid} cmd={cmd}")
+            threading.Thread(target=watch_bridge_exit,args=(icon,bridge_proc),
+                             name="BridgeExitWatcher",daemon=True).start()
         except Exception as e:
             log(f"Start failed: {e}\n{traceback.format_exc()}")
             notify(icon,"Could not start translator. See WoWInterpreter.log.")
     refresh(icon)
+
+def watch_bridge_exit(icon,proc):
+    global bridge_proc
+    try:
+        rc=proc.wait()
+        log(f"Bridge child exited PID={proc.pid} rc={rc}")
+        with lock:
+            if bridge_proc is proc:
+                bridge_proc=None
+        refresh(icon)
+    except Exception as e:
+        log(f"Bridge exit watcher failed: {e}")
 
 def stop(icon,item=None):
     global bridge_proc
@@ -71,7 +85,7 @@ def stop(icon,item=None):
     refresh(icon)
 
 def status(icon,item=None):
-    notify(icon,f"Translator: {'RUNNING' if is_running() else 'STOPPED'}. NLLB loads on first translation.")
+    notify(icon,f"Translator: {'RUNNING' if is_running() else 'STOPPED'}. NLLB preloads on Start Translator.")
 
 def open_log(icon,item=None):
     try:
@@ -83,7 +97,7 @@ def quit_app(icon,item=None):
     stop(icon); log("WoWInterpreter exiting."); icon.stop()
 
 def main():
-    log("="*60); log("WoWInterpreter v2.1.0 starting")
+    log("="*60); log("WoWInterpreter v2.1.34 starting")
     log(f"Resource root={RESOURCE_ROOT}")
     if not acquire_single_instance():
         log("Second instance blocked."); return
