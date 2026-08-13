@@ -51,7 +51,7 @@ jobs:
       - name: Build frozen application
         shell: cmd
         run: |
-          py -m PyInstaller --noconfirm --clean --windowed --onedir ^
+          python -m PyInstaller --noconfirm --clean --windowed --onedir ^
             --name WoWInterpreter ^
             --icon "assets\WoWInterpreter.ico" ^
             --collect-all PIL ^
