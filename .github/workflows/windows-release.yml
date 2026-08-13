@@ -143,11 +143,30 @@ jobs:
           $setup = "installer/WoWInterpreter-$version-Setup.exe"
           if (-not (Test-Path $setup)) { throw "Expected installer not found: $setup" }
 
-      - name: Upload installer artifact
+      - name: Generate SHA-256 checksum
+        id: checksum
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $fileName = "WoWInterpreter-$version-Setup.exe"
+          $setup = "installer/$fileName"
+          $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $fileName" | Set-Content -Path "installer/SHA256SUMS.txt" -Encoding ascii
+          "sha256=$hash" >> $env:GITHUB_OUTPUT
+          "### Windows installer SHA-256" >> $env:GITHUB_STEP_SUMMARY
+          "" >> $env:GITHUB_STEP_SUMMARY
+          '```text' >> $env:GITHUB_STEP_SUMMARY
+          "$hash  $fileName" >> $env:GITHUB_STEP_SUMMARY
+          '```' >> $env:GITHUB_STEP_SUMMARY
+          Write-Host "SHA-256: $hash  $fileName"
+
+      - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
           name: WoWInterpreter-${{ steps.version.outputs.version }}-Setup
-          path: installer/WoWInterpreter-${{ steps.version.outputs.version }}-Setup.exe
+          path: |
+            installer/WoWInterpreter-${{ steps.version.outputs.version }}-Setup.exe
+            installer/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
 
@@ -155,5 +174,11 @@ jobs:
         if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         uses: softprops/action-gh-release@v2
         with:
-          files: installer/WoWInterpreter-${{ steps.version.outputs.version }}-Setup.exe
+          files: |
+            installer/WoWInterpreter-${{ steps.version.outputs.version }}-Setup.exe
+            installer/SHA256SUMS.txt
           generate_release_notes: true
+          body: |
+            ## SHA-256
+
+            `${{ steps.checksum.outputs.sha256 }}` — `WoWInterpreter-${{ steps.version.outputs.version }}-Setup.exe`
