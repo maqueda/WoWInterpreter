@@ -1,4 +1,4 @@
-﻿## Interface: 11403
+## Interface: 11403
 ## Title: WoWInterpreter
 ## Notes: English <-> Simplified Chinese chat translator
 ## Version: 2.1.34
