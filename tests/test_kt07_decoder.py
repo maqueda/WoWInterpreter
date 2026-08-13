@@ -36,8 +36,10 @@ def render(text, geometry, size=(900, 260)):
 class KT07DecoderTests(unittest.TestCase):
     def test_exact_geometries(self):
         cases = (
-            Geometry(7.0, 12.0, 3.0, 3.0),
+            Geometry(7.0, 12.0, 2.5, 2.5),
             Geometry(11.25, 17.5, 2.75, 3.0),
+            Geometry(7.0, 12.0, 3.0, 3.0),
+            Geometry(12.25, 16.5, 3.25, 3.5),
             Geometry(13.5, 19.25, 4.5, 4.25),
             Geometry(21.0, 24.0, 6.0, 6.0),
             Geometry(30.25, 31.5, 8.0, 7.75),
@@ -46,6 +48,16 @@ class KT07DecoderTests(unittest.TestCase):
             with self.subTest(geometry=geometry):
                 image = render("hello 世界", geometry)
                 self.assertEqual("hello 世界", decode_at(image, geometry))
+
+    def test_fractional_origin_drift_matrix(self):
+        pitches = (2.5, 2.75, 3.0, 3.25, 3.5, 4.25)
+        origins = ((7.0, 10.0), (7.25, 10.5), (11.5, 17.25))
+        for pitch in pitches:
+            for x, y in origins:
+                geometry = Geometry(x, y, pitch, pitch)
+                with self.subTest(geometry=geometry):
+                    image = render("KT07 scale test", geometry)
+                    self.assertEqual("KT07 scale test", decode_at(image, geometry))
 
     def test_adaptive_search_recovers_three_pixel_case(self):
         geometry = Geometry(7.0, 10.0, 3.0, 3.0)
