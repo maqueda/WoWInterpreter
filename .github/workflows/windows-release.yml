@@ -1,0 +1,184 @@
+name: Windows Release
+
+on:
+  pull_request:
+    paths:
+      - "WoWInterpreterTray.py"
+      - "Bridge/**"
+      - "Addon/**"
+      - "assets/**"
+      - "Documentation/**"
+      - "installer-languages/**"
+      - "requirements-runtime.txt"
+      - "build_windows.bat"
+      - "build_release.bat"
+      - "installer.iss"
+      - ".github/workflows/windows-release.yml"
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-runtime.txt
+
+      - name: Install Python dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-runtime.txt pyinstaller
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build frozen application
+        shell: cmd
+        run: |
+          python -m PyInstaller --noconfirm --clean --windowed --onedir ^
+            --name WoWInterpreter ^
+            --icon "assets\WoWInterpreter.ico" ^
+            --collect-all PIL ^
+            --collect-all pyperclip ^
+            --collect-all transformers ^
+            --collect-all sentencepiece ^
+            --collect-all torch ^
+            --collect-all sacremoses ^
+            --collect-all pystray ^
+            --hidden-import PIL.ImageGrab ^
+            --hidden-import PIL.Image ^
+            --hidden-import PIL.ImageTk ^
+            --hidden-import pyperclip ^
+            --hidden-import transformers ^
+            --hidden-import torch ^
+            --hidden-import sentencepiece ^
+            --hidden-import tkinter ^
+            --hidden-import tkinter.scrolledtext ^
+            --hidden-import pystray._win32 ^
+            --add-data "Bridge;Bridge" ^
+            --add-data "assets;assets" ^
+            WoWInterpreterTray.py
+
+      - name: Prune non-runtime development files
+        shell: pwsh
+        run: |
+          $internal = "dist/WoWInterpreter/_internal"
+          Remove-Item "$internal/torch/include" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item "$internal/torch/share/cmake" -Recurse -Force -ErrorAction SilentlyContinue
+          Get-ChildItem $internal -Directory -Filter "*.dist-info" | ForEach-Object {
+            Remove-Item "$($_.FullName)/licenses", "$($_.FullName)/tests", "$($_.FullName)/test" -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          Get-ChildItem $internal -Directory -Filter "*.egg-info" | ForEach-Object {
+            Remove-Item "$($_.FullName)/licenses", "$($_.FullName)/tests", "$($_.FullName)/test" -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Verify frozen runtime
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist/WoWInterpreter/WoWInterpreter.exe")) { throw "Frozen executable was not produced." }
+          $internal = "dist/WoWInterpreter/_internal"
+          foreach ($package in @("tqdm", "transformers", "torch", "tokenizers", "huggingface_hub", "packaging", "numpy")) {
+            $metadata = Get-ChildItem $internal -Directory -Filter "$package-*.dist-info" -ErrorAction SilentlyContinue
+            if (-not $metadata) { Write-Warning "Metadata for $package was not found in the frozen runtime." }
+          }
+
+      - name: Read release version
+        id: version
+        shell: pwsh
+        run: |
+          $iss = Get-Content "installer.iss" -Raw
+          if ($iss -notmatch '#define MyAppVersion "([^"]+)"') { throw "MyAppVersion not found in installer.iss" }
+          $version = $Matches[1]
+          "version=$version" >> $env:GITHUB_OUTPUT
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $expected = "v$version"
+            if ($env:GITHUB_REF_NAME -ne $expected) { throw "Tag $env:GITHUB_REF_NAME does not match installer version $expected" }
+          }
+
+      - name: Validate installer inputs
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $english = "Documentation/WoWInterpreter-$version-User-Guide-English.docx"
+          $chinese = "Documentation/WoWInterpreter-$version-User-Guide-Chinese-Simplified.docx"
+          if (-not (Test-Path $english)) { throw "Missing $english" }
+          if (-not (Test-Path $chinese)) { throw "Missing $chinese" }
+
+      - name: Create short installer stage
+        shell: pwsh
+        run: |
+          $stage = "C:/WI21/stage"
+          Remove-Item "C:/WI21" -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item "$stage/app" -ItemType Directory -Force | Out-Null
+          New-Item "$stage/addon" -ItemType Directory -Force | Out-Null
+          Copy-Item "dist/WoWInterpreter/*" "$stage/app" -Recurse -Force
+          Copy-Item "Addon/WoWInterpreter/*" "$stage/addon" -Recurse -Force
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          New-Item "installer" -ItemType Directory -Force | Out-Null
+          $iscc = "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe"
+          if (-not (Test-Path $iscc)) { $iscc = "$env:ProgramFiles/Inno Setup 6/ISCC.exe" }
+          if (-not (Test-Path $iscc)) { throw "Inno Setup 6 compiler not found." }
+          & $iscc '/DStageRoot=C:\WI21\stage' 'installer.iss'
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+          $version = "${{ steps.version.outputs.version }}"
+          $setup = "installer/WoWInterpreter-$version-Setup.exe"
+          if (-not (Test-Path $setup)) { throw "Expected installer not found: $setup" }
+
+      - name: Generate SHA-256 checksum
+        id: checksum
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $fileName = "WoWInterpreter-$version-Setup.exe"
+          $setup = "installer/$fileName"
+          $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $fileName" | Set-Content -Path "installer/SHA256SUMS.txt" -Encoding ascii
+          "sha256=$hash" >> $env:GITHUB_OUTPUT
+          "### Windows installer SHA-256" >> $env:GITHUB_STEP_SUMMARY
+          "" >> $env:GITHUB_STEP_SUMMARY
+          '```text' >> $env:GITHUB_STEP_SUMMARY
+          "$hash  $fileName" >> $env:GITHUB_STEP_SUMMARY
+          '```' >> $env:GITHUB_STEP_SUMMARY
+          Write-Host "SHA-256: $hash  $fileName"
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: WoWInterpreter-${{ steps.version.outputs.version }}-Setup
+          path: |
+            installer/WoWInterpreter-${{ steps.version.outputs.version }}-Setup.exe
+            installer/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            installer/WoWInterpreter-${{ steps.version.outputs.version }}-Setup.exe
+            installer/SHA256SUMS.txt
+          generate_release_notes: true
+          body: |
+            ## SHA-256
+
+            `${{ steps.checksum.outputs.sha256 }}` — `WoWInterpreter-${{ steps.version.outputs.version }}-Setup.exe`
