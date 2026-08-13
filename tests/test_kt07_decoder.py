@@ -2,7 +2,7 @@ import time
 import unittest
 from PIL import Image, ImageDraw
 
-from Bridge.kt07_decoder import COLS, Geometry, MAGIC, decode_at, decode_near_anchor
+from Bridge.kt07_decoder import COLS, Geometry, MAGIC, decode_at, decode_near_anchor, has_signal_at
 
 IDEAL = (31, 92, 163, 224)
 
@@ -98,6 +98,83 @@ class KT07DecoderTests(unittest.TestCase):
         ImageDraw.Draw(image).rectangle((x0, y0, x0 + 2, y0 + 2),
                                         fill=(224, 224, 224))
         self.assertIsNone(decode_at(image, geometry))
+
+    def test_signal_probe_detects_real_rendered_frame(self):
+        geometry = Geometry(7.0, 10.0, 3.0, 3.0)
+        image = render("signal probe", geometry)
+
+        self.assertTrue(
+            has_signal_at(image, geometry)
+        )
+
+    def test_signal_probe_rejects_empty_transport_area(self):
+        geometry = Geometry(7.0, 10.0, 3.0, 3.0)
+        image = Image.new(
+            "RGB",
+            (900, 260),
+            (8, 8, 8),
+        )
+
+        self.assertFalse(
+            has_signal_at(image, geometry)
+        )
+
+    def test_signal_probe_tolerates_reasonable_level_drift(self):
+        geometry = Geometry(7.0, 10.0, 3.0, 3.0)
+        image = render("level drift", geometry)
+
+        # Simulate modest capture/interpolation luminance drift while
+        # preserving grayscale KT07 cells.
+        pixels = image.load()
+
+        for y in range(image.height):
+            for x in range(image.width):
+                r, g, b = pixels[x, y]
+
+                if r == g == b and r in IDEAL:
+                    shifted = min(255, r + 12)
+                    pixels[x, y] = (
+                        shifted,
+                        shifted,
+                        shifted,
+                    )
+
+        self.assertTrue(
+            has_signal_at(image, geometry)
+        )
+        self.assertEqual(
+            "level drift",
+            decode_at(image, geometry),
+        )
+
+    def test_signal_probe_does_not_validate_geometry(self):
+        real_geometry = Geometry(
+            12.25,
+            16.5,
+            3.25,
+            3.5,
+        )
+        wrong_geometry = Geometry(
+            200.0,
+            120.0,
+            3.25,
+            3.5,
+        )
+
+        image = render(
+            "geometry probe",
+            real_geometry,
+        )
+
+        self.assertTrue(
+            has_signal_at(image, real_geometry)
+        )
+        self.assertFalse(
+            has_signal_at(image, wrong_geometry)
+        )
+        self.assertIsNone(
+            decode_at(image, wrong_geometry)
+        )
 
     def test_locked_fast_path_is_cheap(self):
         geometry = Geometry(7.0, 10.0, 3.0, 3.0)

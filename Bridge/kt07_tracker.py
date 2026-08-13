@@ -1,11 +1,11 @@
-﻿"""Stateful KT07 calibration policy for the live Bridge capture loop.
+"""Stateful KT07 calibration policy for the live Bridge capture loop.
 
 Owns only geometry lifecycle: validated lock, cheap fast path, bounded local
 recovery, and rare exhaustive recalibration. Screen capture stays in bridge.py.
 """
 from dataclasses import dataclass
 
-from Bridge.kt07_decoder import decode_at, decode_near_anchor
+from Bridge.kt07_decoder import decode_at, decode_near_anchor, has_signal_at
 
 
 @dataclass
@@ -52,6 +52,14 @@ class KT07GeometryTracker:
 
             if text is not None:
                 return self._accept(text, self.geometry, "fast")
+
+            # A validated geometry remains useful while KT07 is idle.
+            # No visible transport signal is not evidence of a geometry
+            # change, so keep the lock and reset recovery counters.
+            if not has_signal_at(image, self.geometry):
+                self.failures = 0
+                self.misses_since_lock = 0
+                return DecodeResult(None, self.geometry, "idle")
 
             self.failures += 1
             self.misses_since_lock += 1

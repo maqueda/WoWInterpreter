@@ -1,4 +1,4 @@
-﻿import unittest
+import unittest
 from unittest.mock import patch
 
 from Bridge.kt07_decoder import Geometry
@@ -48,11 +48,10 @@ class KT07GeometryTrackerTests(unittest.TestCase):
 
         self.assertEqual("fast", result.state)
         self.assertEqual("hello", result.text)
-
         fast.assert_called_once()
         calibrate.assert_not_called()
 
-    def test_transient_failure_does_not_drop_lock(self):
+    def test_transient_signal_failure_does_not_drop_lock(self):
         tracker = KT07GeometryTracker(
             local_after=2,
             unlock_after=5,
@@ -63,6 +62,9 @@ class KT07GeometryTrackerTests(unittest.TestCase):
         with patch(
             "Bridge.kt07_tracker.decode_at",
             return_value=None,
+        ), patch(
+            "Bridge.kt07_tracker.has_signal_at",
+            return_value=True,
         ), patch(
             "Bridge.kt07_tracker.decode_near_anchor",
         ) as calibrate:
@@ -76,7 +78,6 @@ class KT07GeometryTrackerTests(unittest.TestCase):
         self.assertEqual("transient", result.state)
         self.assertEqual(G1, tracker.geometry)
         self.assertTrue(tracker.locked)
-
         calibrate.assert_not_called()
 
     def test_local_recalibration_replaces_geometry(self):
@@ -92,6 +93,9 @@ class KT07GeometryTrackerTests(unittest.TestCase):
         with patch(
             "Bridge.kt07_tracker.decode_at",
             return_value=None,
+        ), patch(
+            "Bridge.kt07_tracker.has_signal_at",
+            return_value=True,
         ), patch(
             "Bridge.kt07_tracker.decode_near_anchor",
             return_value=("moved", G2),
@@ -115,7 +119,7 @@ class KT07GeometryTrackerTests(unittest.TestCase):
             calibrate.call_args.kwargs["exhaustive"]
         )
 
-    def test_repeated_failures_unlock_geometry(self):
+    def test_repeated_signal_failures_unlock_geometry(self):
         tracker = KT07GeometryTracker(
             local_after=2,
             unlock_after=3,
@@ -128,6 +132,9 @@ class KT07GeometryTrackerTests(unittest.TestCase):
         with patch(
             "Bridge.kt07_tracker.decode_at",
             return_value=None,
+        ), patch(
+            "Bridge.kt07_tracker.has_signal_at",
+            return_value=True,
         ), patch(
             "Bridge.kt07_tracker.decode_near_anchor",
             return_value=None,
@@ -177,7 +184,6 @@ class KT07GeometryTrackerTests(unittest.TestCase):
             )
 
         self.assertEqual([False, True], calls)
-
         self.assertEqual(
             "exhaustive-calibrated",
             result.state,
@@ -230,6 +236,102 @@ class KT07GeometryTrackerTests(unittest.TestCase):
             tracker.misses_since_lock,
         )
         self.assertFalse(tracker.locked)
+
+    def test_idle_frame_preserves_validated_geometry(self):
+        tracker = KT07GeometryTracker()
+        tracker.geometry = G1
+
+        with patch(
+            "Bridge.kt07_tracker.decode_at",
+            return_value=None,
+        ), patch(
+            "Bridge.kt07_tracker.has_signal_at",
+            return_value=False,
+        ), patch(
+            "Bridge.kt07_tracker.decode_near_anchor",
+        ) as calibrate:
+
+            result = tracker.decode(
+                object(),
+                (7, 1, 43, 7),
+                3.0,
+            )
+
+        self.assertEqual("idle", result.state)
+        self.assertIsNone(result.text)
+        self.assertEqual(G1, tracker.geometry)
+        self.assertTrue(tracker.locked)
+        self.assertEqual(0, tracker.failures)
+        self.assertEqual(0, tracker.misses_since_lock)
+        calibrate.assert_not_called()
+
+    def test_one_hundred_idle_frames_keep_geometry_locked(self):
+        tracker = KT07GeometryTracker()
+        tracker.geometry = G1
+
+        with patch(
+            "Bridge.kt07_tracker.decode_at",
+            return_value=None,
+        ), patch(
+            "Bridge.kt07_tracker.has_signal_at",
+            return_value=False,
+        ), patch(
+            "Bridge.kt07_tracker.decode_near_anchor",
+        ) as calibrate:
+
+            for _ in range(100):
+                result = tracker.decode(
+                    object(),
+                    (7, 1, 43, 7),
+                    3.0,
+                )
+
+        self.assertEqual("idle", result.state)
+        self.assertEqual(G1, tracker.geometry)
+        self.assertTrue(tracker.locked)
+        self.assertEqual(0, tracker.failures)
+        self.assertEqual(0, tracker.misses_since_lock)
+        calibrate.assert_not_called()
+
+    def test_payload_after_idle_uses_existing_geometry_immediately(self):
+        tracker = KT07GeometryTracker()
+        tracker.geometry = G1
+
+        with patch(
+            "Bridge.kt07_tracker.decode_at",
+            side_effect=[None, None, "new message"],
+        ) as fast, patch(
+            "Bridge.kt07_tracker.has_signal_at",
+            side_effect=[False, False],
+        ), patch(
+            "Bridge.kt07_tracker.decode_near_anchor",
+        ) as calibrate:
+
+            first = tracker.decode(
+                object(),
+                (7, 1, 43, 7),
+                3.0,
+            )
+            second = tracker.decode(
+                object(),
+                (7, 1, 43, 7),
+                3.0,
+            )
+            third = tracker.decode(
+                object(),
+                (7, 1, 43, 7),
+                3.0,
+            )
+
+        self.assertEqual("idle", first.state)
+        self.assertEqual("idle", second.state)
+        self.assertEqual("fast", third.state)
+        self.assertEqual("new message", third.text)
+        self.assertEqual(G1, tracker.geometry)
+        self.assertTrue(tracker.locked)
+
+        self.assertEqual(3, fast.call_count)
+        calibrate.assert_not_called()
 
 
 if __name__ == "__main__":

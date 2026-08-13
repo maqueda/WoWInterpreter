@@ -1,4 +1,4 @@
-﻿import time
+import time
 import unittest
 from unittest.mock import patch
 
@@ -80,6 +80,9 @@ class KT07LiveCycleTests(unittest.TestCase):
             "Bridge.kt07_tracker.decode_at",
             return_value=None,
         ), patch(
+            "Bridge.kt07_tracker.has_signal_at",
+            return_value=True,
+        ), patch(
             "Bridge.kt07_tracker.decode_near_anchor",
         ) as calibrate:
 
@@ -99,6 +102,9 @@ class KT07LiveCycleTests(unittest.TestCase):
         with patch(
             "Bridge.kt07_tracker.decode_at",
             return_value=None,
+        ), patch(
+            "Bridge.kt07_tracker.has_signal_at",
+            return_value=True,
         ), patch(
             "Bridge.kt07_tracker.decode_near_anchor",
             return_value=("moved", G2),
@@ -147,6 +153,9 @@ class KT07LiveCycleTests(unittest.TestCase):
             with patch(
                 "Bridge.kt07_tracker.decode_at",
                 return_value=None,
+            ), patch(
+                "Bridge.kt07_tracker.has_signal_at",
+                return_value=True,
             ), patch(
                 "Bridge.kt07_tracker.decode_near_anchor",
                 return_value=None,

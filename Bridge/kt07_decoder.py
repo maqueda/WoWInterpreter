@@ -86,6 +86,40 @@ def _quick_magic_prefix(im, geometry):
     return _quick_symbol(im, geometry, 0) == 1 and _quick_symbol(im, geometry, 3) == 3
 
 
+def has_signal_at(im, geometry):
+    """Probe for KT07-like cells at an already validated geometry.
+
+    This is only a presence probe. It never establishes or validates
+    geometry; a geometry lock still requires full decode_at() validation.
+    """
+    matches = 0
+
+    for index in (0, 1, 2, 3):
+        col, row = index % COLS, index // COLS
+        cx = geometry.x + (col + 0.5) * geometry.pitch_x
+        cy = geometry.y + (row + 0.5) * geometry.pitch_y
+        px, py = int(math.floor(cx)), int(math.floor(cy))
+
+        if not (0 <= px < im.width and 0 <= py < im.height):
+            continue
+
+        r, g, b = im.getpixel((px, py))[:3]
+
+        # KT07 transport cells are grayscale.
+        if max(r, g, b) - min(r, g, b) >= 35:
+            continue
+
+        level = (r + g + b) // 3
+
+        # Unlike _classify(), presence detection must reject pixels that
+        # merely happen to be closest to a KT07 level. This prevents an
+        # empty/dark background from looking like active transport.
+        if min(abs(level - ideal) for ideal in IDEAL) <= 18:
+            matches += 1
+
+    return matches >= 2
+
+
 def read_byte(im, geometry, byte_index):
     digits = [_classify(_symbol_value(im, geometry, byte_index * 4 + i)) for i in range(4)]
     if any(digit is None for digit in digits):
