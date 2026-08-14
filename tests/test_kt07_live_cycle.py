@@ -3,7 +3,8 @@ import unittest
 from unittest.mock import patch
 
 from Bridge.kt07_decoder import Geometry
-from Bridge.kt07_tracker import KT07GeometryTracker
+from Bridge.kt07_relocation import validate_candidate_rois
+from Bridge.kt07_tracker import KT07DuplicateSuppressor, KT07GeometryTracker
 
 
 G1 = Geometry(7.0, 10.0, 3.0, 3.0)
@@ -15,6 +16,36 @@ IMAGE = object()
 
 
 class KT07LiveCycleTests(unittest.TestCase):
+
+    def test_failed_relocation_probe_does_not_block_same_geometry_message(self):
+        from PIL import Image
+
+        gate = KT07DuplicateSuppressor()
+        tracker = KT07GeometryTracker()
+        tracker.geometry = G1
+
+        self.assertEqual("same message", gate.observe("same message", "fast", True))
+        self.assertIsNone(gate.observe(None, "idle", True))
+
+        relocation = validate_candidate_rois(
+            Image.new("RGB", (800, 600)),
+            [],
+            tracker,
+            lambda _image: self.fail("no candidate ROI should be validated"),
+        )
+        self.assertIsNone(relocation)
+        self.assertEqual(G1, tracker.geometry)
+        self.assertTrue(tracker.locked)
+        self.assertEqual("same message", gate.observe("same message", "fast", True))
+
+    def test_message_idle_message_cycle_repeats_multiple_times(self):
+        gate = KT07DuplicateSuppressor()
+        emitted = []
+        for message in ("one", "two", "three"):
+            emitted.append(gate.observe(message, "fast", True))
+            self.assertIsNone(gate.observe(message, "fast", True))
+            self.assertIsNone(gate.observe(None, "idle", True))
+        self.assertEqual(["one", "two", "three"], emitted)
 
     def test_complete_live_recovery_cycle(self):
         tracker = KT07GeometryTracker(

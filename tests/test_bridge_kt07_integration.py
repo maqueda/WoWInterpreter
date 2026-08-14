@@ -55,6 +55,16 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
             imported_names,
         )
 
+    def test_user_visible_strings_are_real_unicode_not_mojibake(self):
+        for corrupt in ("Ã¢", "Ã£", "Ã¨", "Ã¦", "Ã‚", "â†", "ã€", "ï¼"):
+            self.assertNotIn(corrupt, self.source)
+        for expected in ("英文 → 中文", "EN→ZH", "ZH→EN", "。"):
+            self.assertIn(expected, self.source)
+
+    def test_worker_ends_duplicate_suppression_on_idle(self):
+        self.assertIn("KT07DuplicateSuppressor", self.source)
+        self.assertIn("duplicates.observe", self.worker_source)
+
     def test_bridge_imports_adaptive_capture_box(self):
         imports = [
             node

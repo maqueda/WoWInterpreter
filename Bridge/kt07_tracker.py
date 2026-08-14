@@ -209,3 +209,20 @@ class KT07GeometryTracker:
             None,
             "calibration-miss",
         )
+
+
+class KT07DuplicateSuppressor:
+    """Suppress a frame while visible, but end suppression at real idle."""
+
+    def __init__(self):
+        self.last = None
+
+    def observe(self, raw, state, locked):
+        if raw:
+            if raw == self.last:
+                return None
+            self.last = raw
+            return raw
+        if state == "idle" or not locked:
+            self.last = None
+        return None
