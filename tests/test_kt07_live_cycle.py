@@ -97,8 +97,39 @@ class KT07LiveCycleTests(unittest.TestCase):
         self.assertTrue(tracker.locked)
         calibrate.assert_not_called()
 
-        # 5. Geometry actually moved. Second failure triggers
-        # bounded local recovery and obtains G2.
+        # 5. Geometry actually moved. The first validated G2 frame becomes
+        # only a candidate; the existing validated geometry remains locked.
+        with patch(
+            "Bridge.kt07_tracker.decode_at",
+            return_value=None,
+        ), patch(
+            "Bridge.kt07_tracker.has_signal_at",
+            return_value=True,
+        ), patch(
+            "Bridge.kt07_tracker.decode_near_anchor",
+            return_value=("moved", G2),
+        ) as calibrate:
+
+            result = tracker.decode(
+                IMAGE,
+                ANCHOR,
+                PITCH,
+            )
+
+        self.assertEqual(
+            "local-candidate",
+            result.state,
+        )
+        self.assertIsNone(result.text)
+        self.assertEqual(G1, tracker.geometry)
+        self.assertTrue(tracker.locked)
+
+        self.assertFalse(
+            calibrate.call_args.kwargs["exhaustive"]
+        )
+
+        # The same independently validated candidate must be seen again
+        # before replacing the existing geometry.
         with patch(
             "Bridge.kt07_tracker.decode_at",
             return_value=None,

@@ -80,7 +80,7 @@ class KT07GeometryTrackerTests(unittest.TestCase):
         self.assertTrue(tracker.locked)
         calibrate.assert_not_called()
 
-    def test_local_recalibration_replaces_geometry(self):
+    def test_local_recalibration_requires_confirmation(self):
         tracker = KT07GeometryTracker(
             local_after=2,
             unlock_after=5,
@@ -108,16 +108,125 @@ class KT07GeometryTrackerTests(unittest.TestCase):
             )
 
         self.assertEqual(
-            "local-recalibrated",
+            "local-candidate",
             result.state,
         )
-        self.assertEqual("moved", result.text)
-        self.assertEqual(G2, tracker.geometry)
-        self.assertEqual(0, tracker.failures)
+        self.assertIsNone(result.text)
+        self.assertEqual(G1, tracker.geometry)
+        self.assertTrue(tracker.locked)
+        self.assertEqual(G2, tracker.candidate_geometry)
+        self.assertEqual(1, tracker.candidate_hits)
 
         self.assertFalse(
             calibrate.call_args.kwargs["exhaustive"]
         )
+
+    def test_repeated_local_candidate_replaces_geometry(self):
+        tracker = KT07GeometryTracker(
+            local_after=2,
+            unlock_after=5,
+            exhaustive_after=9,
+        )
+
+        tracker.geometry = G1
+        tracker.failures = 1
+
+        with patch(
+            "Bridge.kt07_tracker.decode_at",
+            return_value=None,
+        ), patch(
+            "Bridge.kt07_tracker.has_signal_at",
+            return_value=True,
+        ), patch(
+            "Bridge.kt07_tracker.decode_near_anchor",
+            return_value=("moved", G2),
+        ):
+            first = tracker.decode(
+                object(),
+                (7, 1, 43, 7),
+                3.0,
+            )
+
+            second = tracker.decode(
+                object(),
+                (7, 1, 43, 7),
+                3.0,
+            )
+
+        self.assertEqual("local-candidate", first.state)
+        self.assertEqual(
+            "local-recalibrated",
+            second.state,
+        )
+        self.assertEqual("moved", second.text)
+        self.assertEqual(G2, tracker.geometry)
+        self.assertEqual(0, tracker.failures)
+        self.assertIsNone(tracker.candidate_geometry)
+        self.assertEqual(0, tracker.candidate_hits)
+
+    def test_different_local_candidate_restarts_confirmation(self):
+        tracker = KT07GeometryTracker(
+            local_after=2,
+            unlock_after=5,
+            exhaustive_after=9,
+        )
+
+        g3 = Geometry(7.5, 10.0, 3.0, 3.0)
+
+        tracker.geometry = G1
+        tracker.failures = 1
+
+        with patch(
+            "Bridge.kt07_tracker.decode_at",
+            return_value=None,
+        ), patch(
+            "Bridge.kt07_tracker.has_signal_at",
+            return_value=True,
+        ), patch(
+            "Bridge.kt07_tracker.decode_near_anchor",
+            side_effect=[
+                ("first", G2),
+                ("second", g3),
+            ],
+        ):
+            tracker.decode(
+                object(),
+                (7, 1, 43, 7),
+                3.0,
+            )
+
+            result = tracker.decode(
+                object(),
+                (7, 1, 43, 7),
+                3.0,
+            )
+
+        self.assertEqual("local-candidate", result.state)
+        self.assertEqual(G1, tracker.geometry)
+        self.assertEqual(g3, tracker.candidate_geometry)
+        self.assertEqual(1, tracker.candidate_hits)
+
+    def test_fast_decode_clears_pending_candidate(self):
+        tracker = KT07GeometryTracker()
+        tracker.geometry = G1
+        tracker.candidate_geometry = G2
+        tracker.candidate_hits = 1
+
+        with patch(
+            "Bridge.kt07_tracker.decode_at",
+            return_value="stable",
+        ):
+            result = tracker.decode(
+                object(),
+                (7, 1, 43, 7),
+                3.0,
+            )
+
+        self.assertEqual("fast", result.state)
+        self.assertEqual("stable", result.text)
+        self.assertEqual(G1, tracker.geometry)
+        self.assertIsNone(tracker.candidate_geometry)
+        self.assertEqual(0, tracker.candidate_hits)
 
     def test_repeated_signal_failures_unlock_geometry(self):
         tracker = KT07GeometryTracker(

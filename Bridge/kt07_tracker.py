@@ -1,4 +1,4 @@
-"""Stateful KT07 calibration policy for the live Bridge capture loop.
+﻿"""Stateful KT07 calibration policy for the live Bridge capture loop.
 
 Owns only geometry lifecycle: validated lock, cheap fast path, bounded local
 recovery, and rare exhaustive recalibration. Screen capture stays in bridge.py.
@@ -30,6 +30,11 @@ class KT07GeometryTracker:
         self.failures = 0
         self.misses_since_lock = 0
 
+        # A locally discovered replacement geometry must validate repeatedly
+        # before it is allowed to replace an already trusted geometry.
+        self.candidate_geometry = None
+        self.candidate_hits = 0
+
     @property
     def locked(self):
         return self.geometry is not None
@@ -38,11 +43,15 @@ class KT07GeometryTracker:
         self.geometry = None
         self.failures = 0
         self.misses_since_lock = 0
+        self.candidate_geometry = None
+        self.candidate_hits = 0
 
     def _accept(self, text, geometry, state):
         self.geometry = geometry
         self.failures = 0
         self.misses_since_lock = 0
+        self.candidate_geometry = None
+        self.candidate_hits = 0
         return DecodeResult(text, geometry, state)
 
     def decode(self, image, anchor_box, anchor_pitch):
@@ -51,21 +60,34 @@ class KT07GeometryTracker:
             text = decode_at(image, self.geometry)
 
             if text is not None:
-                return self._accept(text, self.geometry, "fast")
+                return self._accept(
+                    text,
+                    self.geometry,
+                    "fast",
+                )
 
             # A validated geometry remains useful while KT07 is idle.
             # No visible transport signal is not evidence of a geometry
-            # change, so keep the lock and reset recovery counters.
+            # change, so keep the lock and reset recovery state.
             if not has_signal_at(image, self.geometry):
                 self.failures = 0
                 self.misses_since_lock = 0
-                return DecodeResult(None, self.geometry, "idle")
+                self.candidate_geometry = None
+                self.candidate_hits = 0
+                return DecodeResult(
+                    None,
+                    self.geometry,
+                    "idle",
+                )
 
             self.failures += 1
             self.misses_since_lock += 1
 
             # One isolated bad capture must not destroy a good lock.
-            if self.failures < self.local_after:
+            if (
+                self.failures < self.local_after
+                and self.candidate_geometry is None
+            ):
                 return DecodeResult(
                     None,
                     self.geometry,
@@ -82,11 +104,35 @@ class KT07GeometryTracker:
 
             if found is not None:
                 text, geometry = found
-                return self._accept(
-                    text,
-                    geometry,
-                    "local-recalibrated",
+
+                if geometry == self.candidate_geometry:
+                    self.candidate_hits += 1
+                else:
+                    self.candidate_geometry = geometry
+                    self.candidate_hits = 1
+
+                # While a fully validated replacement candidate is being
+                # confirmed, do not let ordinary failure escalation destroy
+                # the trusted geometry. Keep us eligible to check the
+                # candidate again on the next frame.
+                self.failures = self.local_after - 1
+
+                if self.candidate_hits >= 2:
+                    return self._accept(
+                        text,
+                        geometry,
+                        "local-recalibrated",
+                    )
+
+                return DecodeResult(
+                    None,
+                    self.geometry,
+                    "local-candidate",
                 )
+
+            # Confirmation must be consecutive.
+            self.candidate_geometry = None
+            self.candidate_hits = 0
 
             # Keep the previous geometry for a few failures in case the
             # transport is temporarily incomplete.
@@ -100,6 +146,9 @@ class KT07GeometryTracker:
             # Too many validated failures: the old geometry is no longer
             # trustworthy.
             self.geometry = None
+            self.candidate_geometry = None
+            self.candidate_hits = 0
+
             return DecodeResult(
                 None,
                 None,
