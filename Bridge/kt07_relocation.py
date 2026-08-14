@@ -1,6 +1,7 @@
 """Cheap, untrusted candidate discovery for displaced KT07 frames."""
 from dataclasses import replace
 import math
+from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw
 
@@ -19,6 +20,40 @@ ANCHOR_COLORS = (
 DISCOVERY_SCALE = 4
 DISCOVERY_TOLERANCE = 75
 MAX_CANDIDATES = 8
+
+
+def reduced_discovery_image(image):
+    width = max(1, math.ceil(image.width / DISCOVERY_SCALE))
+    height = max(1, math.ceil(image.height / DISCOVERY_SCALE))
+    return image.convert("RGB").resize(
+        (width, height),
+        Image.Resampling.NEAREST,
+    )
+
+
+def _discovery_patterns():
+    """Reduced-pixel offsets produced by 4..16 px blocks at every phase."""
+    patterns = set()
+    sample_offset = DISCOVERY_SCALE // 2
+    for block in range(4, 17):
+        for phase in range(DISCOVERY_SCALE):
+            positions = []
+            for index in range(len(ANCHOR_COLORS)):
+                left = phase + index * block
+                right = left + block
+                first = math.ceil((left - sample_offset) / DISCOVERY_SCALE)
+                while first * DISCOVERY_SCALE + sample_offset < left:
+                    first += 1
+                if first * DISCOVERY_SCALE + sample_offset >= right:
+                    break
+                positions.append(first)
+            if len(positions) == len(ANCHOR_COLORS):
+                origin = positions[0]
+                patterns.add(tuple(value - origin for value in positions))
+    return tuple(sorted(patterns, key=lambda row: (row[-1], row)))
+
+
+DISCOVERY_PATTERNS = _discovery_patterns()
 
 
 class RelocationProbeBackoff:
@@ -80,9 +115,7 @@ def discover_candidate_rois(image, max_candidates=MAX_CANDIDATES):
     Results are hints only. This function deliberately does not decode or
     establish geometry.
     """
-    width = max(1, math.ceil(image.width / DISCOVERY_SCALE))
-    height = max(1, math.ceil(image.height / DISCOVERY_SCALE))
-    reduced = image.convert("RGB").resize((width, height), Image.Resampling.NEAREST)
+    reduced = reduced_discovery_image(image)
     channels = reduced.split()
     masks = [
         _color_mask(channels, color, DISCOVERY_TOLERANCE)
@@ -90,14 +123,15 @@ def discover_candidate_rois(image, max_candidates=MAX_CANDIDATES):
     ]
     points = []
 
-    # Physical anchor blocks are 4..16 px wide, or approximately 1..4 px
-    # after reduction. PIL performs all desktop-sized work in native code.
-    for spacing in range(1, 5):
+    # Non-integral reduced block widths do not have constant spacing. Match
+    # the small set of layouts produced by every supported width and sampling
+    # phase. PIL still performs all image-sized work in native code.
+    for pattern in DISCOVERY_PATTERNS:
         matches = masks[0]
         for index in range(1, len(masks)):
             matches = ImageChops.multiply(
                 matches,
-                _shift_left(masks[index], index * spacing),
+                _shift_left(masks[index], pattern[index]),
             )
 
         while len(points) < max_candidates:
@@ -105,7 +139,13 @@ def discover_candidate_rois(image, max_candidates=MAX_CANDIDATES):
             if bbox is None:
                 break
             x, y = bbox[0], bbox[1]
-            points.append((x * DISCOVERY_SCALE, y * DISCOVERY_SCALE))
+            point = (x * DISCOVERY_SCALE, y * DISCOVERY_SCALE)
+            if all(
+                abs(point[0] - old[0]) > 96
+                or abs(point[1] - old[1]) > 96
+                for old in points
+            ):
+                points.append(point)
             ImageDraw.Draw(matches).rectangle(
                 (max(0, x - 5), max(0, y - 5), x + 10, y + 10),
                 fill=0,
@@ -127,6 +167,23 @@ def discover_candidate_rois(image, max_candidates=MAX_CANDIDATES):
         if roi[2] > roi[0] and roi[3] > roi[1] and roi not in rois:
             rois.append(roi)
     return rois
+
+
+def save_discovery_diagnostic(image, directory, candidate_count):
+    """Overwrite one bounded diagnostic set; the caller controls throttling."""
+    directory = Path(directory)
+    full_path = directory / "kt07_relocation_failure.png"
+    reduced_path = directory / "kt07_relocation_reduced.png"
+    meta_path = directory / "kt07_relocation_failure.txt"
+    image.save(full_path)
+    reduced_discovery_image(image).save(reduced_path)
+    meta_path.write_text(
+        f"screen={image.width}x{image.height}\n"
+        f"discovery_scale={DISCOVERY_SCALE}\n"
+        f"candidate_count={candidate_count}\n",
+        encoding="utf-8",
+    )
+    return full_path, reduced_path, meta_path
 
 
 def offset_box(box, offset_x, offset_y):

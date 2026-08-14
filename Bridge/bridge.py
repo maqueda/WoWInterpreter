@@ -8,6 +8,7 @@ from Bridge.kt07_decoder import capture_box_for_geometry
 from Bridge.kt07_relocation import (
     RelocationProbeBackoff,
     discover_candidate_rois,
+    save_discovery_diagnostic,
     validate_candidate_rois,
 )
 
@@ -101,6 +102,20 @@ def _validate_relocation(full_image, tracker, candidate_rois=None):
         tracker,
         locate_kt07_anchor,
     )
+
+
+def _save_relocation_diagnostic(image, candidate_count):
+    """Overwrite a bounded diagnostic set for real Windowed-mode failures."""
+    try:
+        paths=save_discovery_diagnostic(
+            image,HERE,candidate_count
+        )
+        print(
+            "[KT07] Relocation diagnostic updated: "
+            f"{paths[0]}",flush=True
+        )
+    except Exception as e:
+        print("[KT07] Relocation diagnostic failed:",repr(e),flush=True)
 
 
 def save_kt07_diagnostic(im,geo):
@@ -1016,6 +1031,7 @@ def worker():
  generic_fallback_misses=0
  relocation_backoff=RelocationProbeBackoff()
  relocation_backoff.reset(time.monotonic())
+ relocation_diag_at=0.0
 
  while True:
   try:
@@ -1317,6 +1333,9 @@ def worker():
      diag("KT07 relocation candidate failed complete frame validation.")
     else:
      diag("KT07 relocation discovery found no anchor candidate.")
+     if time.monotonic()-relocation_diag_at>=60.0:
+      _save_relocation_diagnostic(recovery_im,0)
+      relocation_diag_at=time.monotonic()
 
    # ---------------------------------------------------------
    # VALID TRANSPORT FRAME
