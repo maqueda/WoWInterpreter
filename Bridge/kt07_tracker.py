@@ -54,6 +54,10 @@ class KT07GeometryTracker:
         self.candidate_hits = 0
         return DecodeResult(text, geometry, state)
 
+    def accept_validated_relocation(self, text, geometry):
+        """Install geometry only after a complete decoder validation."""
+        return self._accept(text, geometry, "relocated")
+
     def decode(self, image, anchor_box, anchor_pitch):
         # Fast path: a previously checksum-validated geometry.
         if self.geometry is not None:

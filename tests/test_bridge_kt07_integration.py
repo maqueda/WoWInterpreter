@@ -389,23 +389,12 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
         self.assertEqual(2, len(calls))
 
     def test_windowed_anchor_still_requires_tracker_validation(self):
-        self.assertIn(
-            "found=locate_kt07_anchor_anywhere(im)",
-            self.worker_source,
-        )
+        self.assertIn("candidate_rois=locate_kt07_anchor_anywhere(im)", self.worker_source)
 
         # Discovery is only an anchor hint. The resulting box/pitch must
         # still flow through tracker.decode(), which performs complete
         # KT07 frame validation before geometry can become locked.
-        self.assertIn(
-            "anchor_box=box",
-            self.worker_source,
-        )
-
-        self.assertIn(
-            "anchor_pitch=cell",
-            self.worker_source,
-        )
+        self.assertIn("relocated=_validate_relocation", self.worker_source)
 
         tracker_calls = [
             node
@@ -493,7 +482,7 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
         # 1. initial/exhaustive calibration;
         # 2. local recalibration;
         # 3. validated global relocation after a mode/resolution change.
-        self.assertEqual(3, occurrences)
+        self.assertEqual(4, occurrences)
 
         self.assertIn(
             "_protected_rect_for_geometry",
@@ -614,15 +603,7 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
             block,
         )
 
-        self.assertIn(
-            '"capture_relocation_full"',
-            block,
-        )
-
-        self.assertIn(
-            '"anchor_relocation"',
-            block,
-        )
+        self.assertIn("relocation_backoff.next_probe=0.0", block)
 
 
     def test_relocated_anchor_requires_complete_tracker_validation(self):
@@ -636,25 +617,25 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
             state_pos:state_pos + 3000
         ]
 
-        self.assertIn(
-            "recovery_found=locate_kt07_anchor_anywhere",
-            block,
-        )
+        self.assertIn("_validate_relocation", self.worker_source)
+        self.assertIn("validate_candidate_rois", self.source)
+        tracker_source = (
+            BRIDGE.parent / "kt07_tracker.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("accept_validated_relocation", tracker_source)
 
-        self.assertIn(
-            "recovery_result=tracker.decode",
-            block,
-        )
+    def test_locked_idle_relocation_is_throttled(self):
+        self.assertIn('result.state=="idle"', self.worker_source)
+        self.assertIn("relocation_backoff.due", self.worker_source)
+        self.assertIn("relocation_backoff.attempted", self.worker_source)
 
-        self.assertIn(
-            '"calibrated"',
-            block,
+    def test_global_locator_has_no_desktop_pixel_loops(self):
+        helper = next(
+            node for node in self.tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "locate_kt07_anchor_anywhere"
         )
-
-        self.assertIn(
-            '"exhaustive-calibrated"',
-            block,
-        )
+        self.assertFalse(any(isinstance(node, (ast.For, ast.While)) for node in ast.walk(helper)))
 
 
     def test_relocation_updates_dynamic_overlay_protection(self):

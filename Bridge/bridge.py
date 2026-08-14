@@ -5,6 +5,11 @@ import pyperclip
 
 from Bridge.kt07_tracker import KT07GeometryTracker
 from Bridge.kt07_decoder import capture_box_for_geometry
+from Bridge.kt07_relocation import (
+    RelocationProbeBackoff,
+    discover_candidate_rois,
+    validate_candidate_rois,
+)
 
 MAX_BYTES=180
 COLS=32
@@ -82,63 +87,20 @@ def locate_kt07_anchor(im):
     return None
 
 def locate_kt07_anchor_anywhere(im):
-    """Locate the RGB/YCM anchor anywhere on screen.
+    """Return candidate ROIs; discovery is never trusted as geometry."""
+    return discover_candidate_rois(im)
 
-    This is an occasional Windowed-mode fallback only. Finding the anchor
-    never establishes a geometry lock; the complete KT07 frame must still
-    validate through KT07GeometryTracker.
-    """
-    w, h = im.size
 
-    for d in range(4, 17):
-        half = max(1, int(round(d * .25)))
-        max_x = w - 6 * d - half
-
-        if max_x <= half:
-            continue
-
-        # Coarse scan first. This fallback runs rarely, so a 2 px stride is
-        # still responsive without putting the full-screen scan in the hot
-        # idle path.
-        for cy in range(half, h - half, 2):
-            for cx in range(half, max_x, 2):
-                valid = True
-
-                for i, target in enumerate(ANCHOR_COLORS):
-                    px = cx + i * d
-                    pts = [
-                        im.getpixel((px + sx, cy + sy))
-                        for sx in (-half, 0, half)
-                        for sy in (-half, 0, half)
-                        if (
-                            0 <= px + sx < w
-                            and 0 <= cy + sy < h
-                        )
-                    ]
-
-                    if sum(
-                        _near_color(p, target)
-                        for p in pts
-                    ) < max(3, len(pts) // 2):
-                        valid = False
-                        break
-
-                if valid:
-                    scale = d / 8.0
-                    cell = d / 2.0
-                    left = cx - d / 2.0
-                    top = cy - d / 2.0
-                    ox = left + 2 * scale
-                    oy = top + 10 * scale
-                    box = (
-                        round(left),
-                        round(top),
-                        round(left + 6 * d),
-                        round(top + d),
-                    )
-                    return ox, oy, cell, box
-
-    return None
+def _validate_relocation(full_image, tracker, candidate_rois=None):
+    """Validate displaced candidates in small ROIs and publish globals."""
+    if candidate_rois is None:
+        candidate_rois = locate_kt07_anchor_anywhere(full_image)
+    return validate_candidate_rois(
+        full_image,
+        candidate_rois,
+        tracker,
+        locate_kt07_anchor,
+    )
 
 
 def save_kt07_diagnostic(im,geo):
@@ -1052,6 +1014,8 @@ def worker():
  # the cheap hot path. Only after repeated misses do we occasionally scan
  # the whole desktop for a displaced WoW window.
  generic_fallback_misses=0
+ relocation_backoff=RelocationProbeBackoff()
+ relocation_backoff.reset(time.monotonic())
 
  while True:
   try:
@@ -1144,82 +1108,9 @@ def worker():
       flush=True,
      )
 
-     # A previously validated geometry disappearing is strong evidence
-     # that WoW may have moved because of Fullscreen/Windowed mode,
-     # resolution, DPI/UI-scale or window-size changes.
-     #
-     # Do one immediate global relocation instead of waiting for the
-     # ordinary unlocked fallback counter. Discovery alone is NEVER
-     # trusted: the new anchor still has to produce a completely valid
-     # KT07 frame through tracker.decode().
-     _t=time.perf_counter()
-     recovery_im=ImageGrab.grab()
-     _perf_add(
-      "capture_relocation_full",
-      time.perf_counter()-_t,
-     )
-
-     _t=time.perf_counter()
-     recovery_found=locate_kt07_anchor_anywhere(
-      recovery_im
-     )
-     _perf_add(
-      "anchor_relocation",
-      time.perf_counter()-_t,
-     )
-
-     if recovery_found is not None:
-      ox,oy,cell,box=recovery_found
-
-      anchor_box=box
-      anchor_pitch=cell
-
-      _t=time.perf_counter()
-      recovery_result=tracker.decode(
-       recovery_im,
-       anchor_box,
-       anchor_pitch,
-      )
-      _perf_add(
-       "calibration",
-       time.perf_counter()-_t,
-      )
-
-      if recovery_result.state in (
-       "calibrated",
-       "exhaustive-calibrated",
-      ):
-       result=recovery_result
-       raw=recovery_result.text
-       transport_active=True
-       generic_fallback_misses=0
-
-       events.append((
-        "kt07_geometry",
-        _protected_rect_for_geometry(
-         recovery_result.geometry
-        ),
-       ))
-
-       print(
-        "[KT07] Geometry relocated after display "
-        "change: "
-        f"{recovery_result.geometry}",
-        flush=True,
-       )
-
-       debug_saved=False
-
-      else:
-       diag(
-        "KT07 relocation anchor found but complete "
-        "frame has not validated yet."
-       )
-
-     else:
-      diag(
-       "KT07 relocation scan found no valid anchor."
-      )
+     # A lost lock is strong evidence of a display-mode change, so allow
+     # the next cheap native relocation probe immediately.
+     relocation_backoff.next_probe=0.0
 
    # ---------------------------------------------------------
    # UNLOCKED
@@ -1278,16 +1169,34 @@ def worker():
       )
 
       _t=time.perf_counter()
-      found=locate_kt07_anchor_anywhere(im)
+      candidate_rois=locate_kt07_anchor_anywhere(im)
       _perf_add(
-       "anchor_windowed",
+       "relocation_candidate_discovery",
        time.perf_counter()-_t,
       )
 
-      if found is not None:
+      _t=time.perf_counter()
+      relocated=_validate_relocation(
+       im,
+       tracker,
+       candidate_rois,
+      )
+      _perf_add(
+       "relocation_candidate_validation",
+       time.perf_counter()-_t,
+      )
+
+      if relocated is not None:
+       result,anchor_box,anchor_pitch=relocated
+       raw=result.text
+       transport_active=True
+       events.append((
+        "kt07_geometry",
+        _protected_rect_for_geometry(result.geometry),
+       ))
        print(
-        "[KT07] Windowed-mode anchor discovered: "
-        f"box={found[3]}",
+        "[KT07] Windowed-mode frame validated: "
+        f"{result.geometry}",
         flush=True,
        )
 
@@ -1363,6 +1272,51 @@ def worker():
        "KT07 anchor not found",
       )
       debug_saved=True
+
+   # A moved KT07 looks idle at the old trusted geometry. Probe at a low,
+   # exponentially backed-off cadence without destroying that lock.
+   if (
+    tracker.locked
+    and result is not None
+    and result.state=="idle"
+    and relocation_backoff.due(time.monotonic())
+   ):
+    _t=time.perf_counter()
+    recovery_im=ImageGrab.grab()
+    _perf_add("capture_relocation_full",time.perf_counter()-_t)
+
+    _t=time.perf_counter()
+    recovery_candidates=locate_kt07_anchor_anywhere(recovery_im)
+    _perf_add("relocation_candidate_discovery",time.perf_counter()-_t)
+
+    _t=time.perf_counter()
+    recovery_validated=_validate_relocation(
+     recovery_im,tracker,recovery_candidates
+    )
+    _perf_add("relocation_candidate_validation",time.perf_counter()-_t)
+    relocation_backoff.attempted(
+     time.monotonic(),recovery_validated is not None
+    )
+
+    if recovery_validated is not None:
+     recovery_result,anchor_box,anchor_pitch=recovery_validated
+     result=recovery_result
+     raw=recovery_result.text
+     transport_active=True
+     generic_fallback_misses=0
+     events.append((
+      "kt07_geometry",
+      _protected_rect_for_geometry(recovery_result.geometry),
+     ))
+     print(
+      "[KT07] Geometry relocated after display change: "
+      f"{recovery_result.geometry}",flush=True
+     )
+     debug_saved=False
+    elif recovery_candidates:
+     diag("KT07 relocation candidate failed complete frame validation.")
+    else:
+     diag("KT07 relocation discovery found no anchor candidate.")
 
    # ---------------------------------------------------------
    # VALID TRANSPORT FRAME
