@@ -1053,6 +1053,15 @@ def worker():
  # the whole desktop for a displaced WoW window.
  generic_fallback_misses=0
 
+ # A locked geometry can become permanently "idle" when WoW moves to a
+ # different screen position (for example Fullscreen -> Windowed). In that
+ # case the old capture area contains no KT07 signal, so the tracker correctly
+ # preserves its validated lock instead of treating the empty area as failure.
+ #
+ # Periodically verify whether KT07 has moved elsewhere on the desktop.
+ locked_idle_misses=0
+ KT07_LOCKED_IDLE_RELOCATION_EVERY=6
+
  while True:
   try:
    raw=None
@@ -1101,10 +1110,95 @@ def worker():
 
     if result.state=="fast":
      transport_active=True
+     locked_idle_misses=0
      debug_saved=False
 
     elif result.state=="idle":
      transport_active=False
+     locked_idle_misses+=1
+
+     # "idle" normally means KT07 simply has no payload, so keeping the
+     # validated geometry is correct. But after several consecutive idle
+     # frames, cheaply verify whether WoW has moved elsewhere on screen.
+     #
+     # Discovery alone is never trusted. A relocated anchor must still pass
+     # the complete KT07 tracker validation before replacing the old lock.
+     if locked_idle_misses >= KT07_LOCKED_IDLE_RELOCATION_EVERY:
+      locked_idle_misses=0
+
+      _t=time.perf_counter()
+      relocation_im=ImageGrab.grab()
+      _perf_add(
+       "capture_idle_relocation_full",
+       time.perf_counter()-_t,
+      )
+
+      _t=time.perf_counter()
+      relocation_found=locate_kt07_anchor_anywhere(
+       relocation_im
+      )
+      _perf_add(
+       "anchor_idle_relocation",
+       time.perf_counter()-_t,
+      )
+
+      if relocation_found is not None:
+       ox,oy,cell,box=relocation_found
+
+       # Do not let the old trusted geometry short-circuit tracker.decode().
+       # Reset only after a real anchor has been discovered elsewhere.
+       old_geometry=tracker.geometry
+
+       if box[0] > 0 or box[1] > 0:
+        tracker.reset()
+        anchor_box=box
+        anchor_pitch=cell
+
+        _t=time.perf_counter()
+        relocation_result=tracker.decode(
+         relocation_im,
+         anchor_box,
+         anchor_pitch,
+        )
+        _perf_add(
+         "calibration",
+         time.perf_counter()-_t,
+        )
+
+        if relocation_result.state in (
+         "calibrated",
+         "exhaustive-calibrated",
+        ):
+         result=relocation_result
+         raw=relocation_result.text
+         transport_active=True
+         generic_fallback_misses=0
+
+         events.append((
+          "kt07_geometry",
+          _protected_rect_for_geometry(
+           relocation_result.geometry
+          ),
+         ))
+
+         print(
+          "[KT07] Geometry relocated while previous "
+          "lock was idle: "
+          f"{relocation_result.geometry}",
+          flush=True,
+         )
+
+         debug_saved=False
+
+        else:
+         # The discovered anchor did not validate a complete frame.
+         # Restore the previous trusted geometry.
+         tracker.geometry=old_geometry
+
+         diag(
+          "KT07 idle relocation anchor found but "
+          "complete frame has not validated yet."
+         )
 
     elif result.state=="transient":
      diag(
@@ -1114,6 +1208,7 @@ def worker():
 
     elif result.state=="local-recalibrated":
      transport_active=True
+     locked_idle_misses=0
 
      events.append((
       "kt07_geometry",

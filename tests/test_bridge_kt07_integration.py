@@ -386,7 +386,8 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
         #
         # Both only discover an anchor. Neither path may establish geometry
         # without complete tracker validation.
-        self.assertEqual(2, len(calls))
+        # Unlocked fallback + lost-lock relocation + locked-idle relocation.
+        self.assertEqual(3, len(calls))
 
     def test_windowed_anchor_still_requires_tracker_validation(self):
         self.assertIn(
@@ -493,7 +494,9 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
         # 1. initial/exhaustive calibration;
         # 2. local recalibration;
         # 3. validated global relocation after a mode/resolution change.
-        self.assertEqual(3, occurrences)
+        # Initial calibration + local recalibration + lost-lock relocation
+        # + locked-idle relocation all publish validated protection geometry.
+        self.assertEqual(4, occurrences)
 
         self.assertIn(
             "_protected_rect_for_geometry",
