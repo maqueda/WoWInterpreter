@@ -226,7 +226,10 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
             and node.value.id == "tracker"
         ]
 
-        self.assertGreaterEqual(len(attributes), 3)
+        # Geometry lock controls capture/calibration lifecycle only.
+        # Polling cadence is deliberately controlled separately by
+        # transport_active.
+        self.assertGreaterEqual(len(attributes), 2)
 
     def test_validated_lock_states_are_handled(self):
         self.assertIn(
@@ -246,6 +249,66 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
 
         self.assertIn(
             '"unlocked"',
+            self.worker_source,
+        )
+
+
+    def test_polling_speed_depends_on_transport_activity(self):
+        self.assertIn(
+            "if transport_active",
+            self.worker_source,
+        )
+
+        self.assertNotIn(
+            "KT07_ACTIVE_INTERVAL\n    if tracker.locked",
+            self.worker_source,
+        )
+
+    def test_idle_tracker_state_stops_fast_polling(self):
+        self.assertIn(
+            'result.state=="idle"',
+            self.worker_source,
+        )
+
+        idle_pos = self.worker_source.find(
+            'result.state=="idle"'
+        )
+
+        self.assertNotEqual(-1, idle_pos)
+
+        idle_block = self.worker_source[
+            idle_pos:idle_pos + 120
+        ]
+
+        self.assertIn(
+            "transport_active=False",
+            idle_block,
+        )
+
+    def test_valid_frame_starts_fast_polling(self):
+        fast_pos = self.worker_source.find(
+            'result.state=="fast"'
+        )
+
+        self.assertNotEqual(-1, fast_pos)
+
+        fast_block = self.worker_source[
+            fast_pos:fast_pos + 120
+        ]
+
+        self.assertIn(
+            "transport_active=True",
+            fast_block,
+        )
+
+    def test_geometry_lock_remains_independent_from_polling_state(self):
+        self.assertIn(
+            "if tracker.locked:",
+            self.worker_source,
+        )
+
+        self.assertIn(
+            "if transport_active",
             self.worker_source,
         )
 

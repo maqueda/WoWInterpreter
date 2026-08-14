@@ -899,6 +899,11 @@ def worker():
    flush=True,
   )
 
+ # A validated geometry and an active transport are different states.
+ # Keep a short fast-poll burst around real transport activity, then fall
+ # back to the cheap idle cadence while preserving the geometry lock.
+ transport_active=False
+
  while True:
   try:
    raw=None
@@ -946,7 +951,11 @@ def worker():
     raw=result.text
 
     if result.state=="fast":
+     transport_active=True
      debug_saved=False
+
+    elif result.state=="idle":
+     transport_active=False
 
     elif result.state=="transient":
      diag(
@@ -955,6 +964,7 @@ def worker():
      )
 
     elif result.state=="local-recalibrated":
+     transport_active=True
      print(
       "[KT07] Geometry locally recalibrated: "
       f"{result.geometry}",
@@ -969,6 +979,7 @@ def worker():
      )
 
     elif result.state=="unlocked":
+     transport_active=False
      print(
       "[KT07] Validated geometry lost after "
       "repeated decode failures; reacquiring anchor.",
@@ -1034,6 +1045,7 @@ def worker():
        "calibrated",
        "exhaustive-calibrated",
       ):
+       transport_active=True
        print(
         "[KT07] Frame validated; geometry locked: "
         f"{result.geometry}",
@@ -1125,7 +1137,7 @@ def worker():
 
    time.sleep(
     KT07_ACTIVE_INTERVAL
-    if tracker.locked
+    if transport_active
     else KT07_IDLE_INTERVAL_OPT
    )
 
