@@ -81,6 +81,66 @@ def locate_kt07_anchor(im):
                     return ox,oy,cell,box
     return None
 
+def locate_kt07_anchor_anywhere(im):
+    """Locate the RGB/YCM anchor anywhere on screen.
+
+    This is an occasional Windowed-mode fallback only. Finding the anchor
+    never establishes a geometry lock; the complete KT07 frame must still
+    validate through KT07GeometryTracker.
+    """
+    w, h = im.size
+
+    for d in range(4, 17):
+        half = max(1, int(round(d * .25)))
+        max_x = w - 6 * d - half
+
+        if max_x <= half:
+            continue
+
+        # Coarse scan first. This fallback runs rarely, so a 2 px stride is
+        # still responsive without putting the full-screen scan in the hot
+        # idle path.
+        for cy in range(half, h - half, 2):
+            for cx in range(half, max_x, 2):
+                valid = True
+
+                for i, target in enumerate(ANCHOR_COLORS):
+                    px = cx + i * d
+                    pts = [
+                        im.getpixel((px + sx, cy + sy))
+                        for sx in (-half, 0, half)
+                        for sy in (-half, 0, half)
+                        if (
+                            0 <= px + sx < w
+                            and 0 <= cy + sy < h
+                        )
+                    ]
+
+                    if sum(
+                        _near_color(p, target)
+                        for p in pts
+                    ) < max(3, len(pts) // 2):
+                        valid = False
+                        break
+
+                if valid:
+                    scale = d / 8.0
+                    cell = d / 2.0
+                    left = cx - d / 2.0
+                    top = cy - d / 2.0
+                    ox = left + 2 * scale
+                    oy = top + 10 * scale
+                    box = (
+                        round(left),
+                        round(top),
+                        round(left + 6 * d),
+                        round(top + d),
+                    )
+                    return ox, oy, cell, box
+
+    return None
+
+
 def save_kt07_diagnostic(im,geo):
     """Persist evidence from the exact screenshot in which KT07 is visible."""
     try:
@@ -904,6 +964,11 @@ def worker():
  # back to the cheap idle cadence while preserving the geometry lock.
  transport_active=False
 
+ # Full-screen/windowed fallback counter. The normal top-left ROI remains
+ # the cheap hot path. Only after repeated misses do we occasionally scan
+ # the whole desktop for a displaced WoW window.
+ generic_fallback_misses=0
+
  while True:
   try:
    raw=None
@@ -1006,8 +1071,12 @@ def worker():
     )
 
     anchor_plausible=fast_locate_kt07_anchor(idle_im)
+    found=None
+    im=idle_im
 
     if anchor_plausible:
+     generic_fallback_misses=0
+
      _t=time.perf_counter()
      im=ImageGrab.grab()
      _perf_add(
@@ -1021,6 +1090,38 @@ def worker():
       "anchor",
       time.perf_counter()-_t,
      )
+
+    else:
+     generic_fallback_misses+=1
+
+     if (
+      generic_fallback_misses
+      >= KT07_GENERIC_FALLBACK_EVERY
+     ):
+      generic_fallback_misses=0
+
+      _t=time.perf_counter()
+      im=ImageGrab.grab()
+      _perf_add(
+       "capture_windowed_full",
+       time.perf_counter()-_t,
+      )
+
+      _t=time.perf_counter()
+      found=locate_kt07_anchor_anywhere(im)
+      _perf_add(
+       "anchor_windowed",
+       time.perf_counter()-_t,
+      )
+
+      if found is not None:
+       print(
+        "[KT07] Windowed-mode anchor discovered: "
+        f"box={found[3]}",
+        flush=True,
+       )
+
+    if anchor_plausible or found is not None:
 
      if found is not None:
       ox,oy,cell,box=found

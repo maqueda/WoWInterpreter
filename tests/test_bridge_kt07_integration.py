@@ -313,5 +313,100 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
         )
 
 
+    def test_windowed_fallback_locator_exists(self):
+        functions = {
+            node.name
+            for node in self.tree.body
+            if isinstance(node, ast.FunctionDef)
+        }
+
+        self.assertIn(
+            "locate_kt07_anchor_anywhere",
+            functions,
+        )
+
+    def test_normal_idle_path_keeps_tiny_roi(self):
+        self.assertIn(
+            "ImageGrab.grab(bbox=KT07_IDLE_ROI)",
+            self.worker_source,
+        )
+
+        self.assertIn(
+            "fast_locate_kt07_anchor(idle_im)",
+            self.worker_source,
+        )
+
+    def test_windowed_fallback_is_bounded_by_miss_counter(self):
+        self.assertIn(
+            "generic_fallback_misses",
+            self.worker_source,
+        )
+
+        self.assertIn(
+            "KT07_GENERIC_FALLBACK_EVERY",
+            self.worker_source,
+        )
+
+        comparisons = [
+            node
+            for node in ast.walk(self.worker)
+            if isinstance(node, ast.Compare)
+            and isinstance(node.left, ast.Name)
+            and node.left.id == "generic_fallback_misses"
+        ]
+
+        self.assertTrue(
+            comparisons,
+            "Windowed fallback must be gated by the miss counter",
+        )
+
+    def test_windowed_fallback_performs_occasional_full_capture(self):
+        self.assertIn(
+            '"capture_windowed_full"',
+            self.worker_source,
+        )
+
+        calls = [
+            node
+            for node in ast.walk(self.worker)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "locate_kt07_anchor_anywhere"
+        ]
+
+        self.assertEqual(1, len(calls))
+
+    def test_windowed_anchor_still_requires_tracker_validation(self):
+        self.assertIn(
+            "found=locate_kt07_anchor_anywhere(im)",
+            self.worker_source,
+        )
+
+        # Discovery is only an anchor hint. The resulting box/pitch must
+        # still flow through tracker.decode(), which performs complete
+        # KT07 frame validation before geometry can become locked.
+        self.assertIn(
+            "anchor_box=box",
+            self.worker_source,
+        )
+
+        self.assertIn(
+            "anchor_pitch=cell",
+            self.worker_source,
+        )
+
+        tracker_calls = [
+            node
+            for node in ast.walk(self.worker)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "decode"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "tracker"
+        ]
+
+        self.assertGreaterEqual(len(tracker_calls), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
