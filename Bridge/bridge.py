@@ -602,8 +602,15 @@ screen_h=rootui.winfo_screenheight()
 # KT07 capture safety ---------------------------------------------------------
 # Users may freely move/resize the overlay. We intervene only after a manual
 # movement settles AND the final window rectangle actually overlaps KT07.
-KT07_PROTECTED_RECT=(0,0,215,180)  # full observed KT07 frame + safety margin
+# Dynamic KT07 protection.
+#
+# This starts with the historical top-left fallback so the overlay is safe
+# before the first validated KT07 frame arrives. Once the decoder validates
+# real geometry, the worker publishes its actual screen-space rectangle and
+# the UI replaces this fallback automatically.
+KT07_PROTECTED_RECT=(0,0,215,180)
 KT07_SAFE_MARGIN=12
+KT07_PROTECTED_PADDING=12
 _overlay_guard_after=None
 _programmatic_geometry=False
 _user_has_positioned_overlay=False
@@ -616,6 +623,72 @@ def _overlay_rect():
 
 def _rects_overlap(a,b):
     return not (a[2] <= b[0] or a[0] >= b[2] or a[3] <= b[1] or a[1] >= b[3])
+
+def _protected_rect_for_geometry(geometry):
+    """Build the real screen-space KT07 protection rectangle.
+
+    Only checksum-validated decoder geometry is allowed here.
+    The rectangle therefore follows fullscreen/windowed moves,
+    resolution changes, DPI/UI-scale changes and window resizing.
+    """
+    box=capture_box_for_geometry(
+        geometry,
+        margin=KT07_PROTECTED_PADDING,
+    )
+
+    return tuple(int(round(v)) for v in box)
+
+
+def _apply_kt07_protected_rect(rect):
+    """Update KT07 protection and immediately enforce it on the overlay."""
+    global KT07_PROTECTED_RECT,desired_geometry
+
+    rect=tuple(int(v) for v in rect)
+
+    if rect == KT07_PROTECTED_RECT:
+        return
+
+    old=KT07_PROTECTED_RECT
+    KT07_PROTECTED_RECT=rect
+
+    print(
+        "[OVERLAY] KT07 protected area updated: "
+        f"{old} -> {KT07_PROTECTED_RECT}",
+        flush=True,
+    )
+
+    # Revalidate the CURRENT overlay position even when the user had
+    # previously positioned it manually. A WoW mode/resolution change may
+    # have moved KT07 underneath an otherwise stationary overlay.
+    current=_overlay_rect()
+    w=current[2]-current[0]
+    h=current[3]-current[1]
+
+    safe=_safe_geometry(
+        w,
+        h,
+        current[0],
+        current[1],
+    )
+
+    if safe != (
+        w,
+        h,
+        current[0],
+        current[1],
+    ):
+        _apply_overlay_geometry(*safe)
+
+        # A safety displacement becomes the new manual position. Do not let
+        # stale META immediately move the overlay back onto KT07.
+        desired_geometry=None
+
+        print(
+            "[OVERLAY] KT07 moved under overlay; "
+            f"overlay adjusted to ({safe[2]},{safe[3]}).",
+            flush=True,
+        )
+
 
 def _safe_geometry(w,h,x,y):
     """Return the nearest non-overlapping overlay position.
@@ -780,12 +853,23 @@ def poll_ui():
     global desired_geometry
     while events:
         kind,data=events.popleft()
-        if kind=="msg_in":
+
+        if kind=="kt07_geometry":
+            _apply_kt07_protected_rect(data)
+
+        elif kind=="msg_in":
             author,out=data
             append_message(author,out,"in")
+
         elif kind=="msg_out":
             author,out,translation_direction=data
-            append_message(author,out,"out",translation_direction)
+            append_message(
+                author,
+                out,
+                "out",
+                translation_direction,
+            )
+
         elif kind=="meta":
             if not _user_has_positioned_overlay:
                 place_next_to_chat(data)
@@ -1030,6 +1114,14 @@ def worker():
 
     elif result.state=="local-recalibrated":
      transport_active=True
+
+     events.append((
+      "kt07_geometry",
+      _protected_rect_for_geometry(
+       result.geometry
+      ),
+     ))
+
      print(
       "[KT07] Geometry locally recalibrated: "
       f"{result.geometry}",
@@ -1147,6 +1239,14 @@ def worker():
        "exhaustive-calibrated",
       ):
        transport_active=True
+
+       events.append((
+        "kt07_geometry",
+        _protected_rect_for_geometry(
+         result.geometry
+        ),
+       ))
+
        print(
         "[KT07] Frame validated; geometry locked: "
         f"{result.geometry}",

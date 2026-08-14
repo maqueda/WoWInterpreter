@@ -408,5 +408,173 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
         self.assertGreaterEqual(len(tracker_calls), 2)
 
 
+    def test_dynamic_kt07_protection_is_derived_from_validated_geometry(self):
+        self.assertIn(
+            "def _protected_rect_for_geometry",
+            self.source,
+        )
+
+        helper = next(
+            node
+            for node in self.tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "_protected_rect_for_geometry"
+        )
+
+        calls = [
+            node
+            for node in ast.walk(helper)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "capture_box_for_geometry"
+        ]
+
+        self.assertEqual(1, len(calls))
+
+        call = calls[0]
+
+        self.assertTrue(
+            any(
+                keyword.arg == "margin"
+                and isinstance(keyword.value, ast.Name)
+                and keyword.value.id == "KT07_PROTECTED_PADDING"
+                for keyword in call.keywords
+            )
+        )
+
+    def test_ui_handles_dynamic_kt07_geometry_event(self):
+        poll_ui = next(
+            node
+            for node in self.tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "poll_ui"
+        )
+
+        poll_source = ast.get_source_segment(
+            self.source,
+            poll_ui,
+        )
+
+        self.assertIn(
+            'kind=="kt07_geometry"',
+            poll_source,
+        )
+
+        self.assertIn(
+            "_apply_kt07_protected_rect(data)",
+            poll_source,
+        )
+
+    def test_worker_publishes_validated_geometry_to_overlay(self):
+        occurrences = self.worker_source.count(
+            '"kt07_geometry"'
+        )
+
+        # Initial/exhaustive calibration and local recalibration
+        # must both publish the newly validated geometry.
+        self.assertEqual(2, occurrences)
+
+        self.assertIn(
+            "_protected_rect_for_geometry",
+            self.worker_source,
+        )
+
+    def test_local_recalibration_updates_overlay_protection(self):
+        state_pos = self.worker_source.find(
+            'result.state=="local-recalibrated"'
+        )
+
+        self.assertNotEqual(-1, state_pos)
+
+        block = self.worker_source[
+            state_pos:state_pos + 500
+        ]
+
+        self.assertIn(
+            '"kt07_geometry"',
+            block,
+        )
+
+        self.assertIn(
+            "_protected_rect_for_geometry",
+            block,
+        )
+
+    def test_initial_calibration_updates_overlay_protection(self):
+        state_pos = self.worker_source.find(
+            '"exhaustive-calibrated"'
+        )
+
+        self.assertNotEqual(-1, state_pos)
+
+        block = self.worker_source[
+            state_pos:state_pos + 600
+        ]
+
+        self.assertIn(
+            '"kt07_geometry"',
+            block,
+        )
+
+        self.assertIn(
+            "_protected_rect_for_geometry",
+            block,
+        )
+
+    def test_protected_rect_change_revalidates_current_overlay(self):
+        helper = next(
+            node
+            for node in self.tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "_apply_kt07_protected_rect"
+        )
+
+        helper_source = ast.get_source_segment(
+            self.source,
+            helper,
+        )
+
+        self.assertIn(
+            "_overlay_rect()",
+            helper_source,
+        )
+
+        self.assertIn(
+            "_safe_geometry(",
+            helper_source,
+        )
+
+        self.assertIn(
+            "_apply_overlay_geometry(*safe)",
+            helper_source,
+        )
+
+    def test_dynamic_protection_can_override_manual_overlay_position(self):
+        helper = next(
+            node
+            for node in self.tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "_apply_kt07_protected_rect"
+        )
+
+        helper_source = ast.get_source_segment(
+            self.source,
+            helper,
+        )
+
+        # Safety correction must not be conditional on
+        # _user_has_positioned_overlay. Resolution/window changes can move
+        # KT07 underneath an overlay that the user positioned previously.
+        self.assertNotIn(
+            "if not _user_has_positioned_overlay",
+            helper_source,
+        )
+
+        self.assertIn(
+            "desired_geometry=None",
+            helper_source,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
