@@ -148,6 +148,12 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
             and node.func.id == "KT07GeometryTracker"
         ]
 
+        # There are two legitimate global relocation paths:
+        # 1. the bounded periodic Windowed-mode fallback;
+        # 2. immediate relocation after a previously validated lock is lost.
+        #
+        # Both only discover an anchor. Neither path may establish geometry
+        # without complete tracker validation.
         self.assertEqual(1, len(calls))
 
     def test_worker_uses_tracker_decode(self):
@@ -374,7 +380,13 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
             and node.func.id == "locate_kt07_anchor_anywhere"
         ]
 
-        self.assertEqual(1, len(calls))
+        # There are two legitimate global relocation paths:
+        # 1. the bounded periodic Windowed-mode fallback;
+        # 2. immediate relocation after a previously validated lock is lost.
+        #
+        # Both only discover an anchor. Neither path may establish geometry
+        # without complete tracker validation.
+        self.assertEqual(2, len(calls))
 
     def test_windowed_anchor_still_requires_tracker_validation(self):
         self.assertIn(
@@ -429,6 +441,12 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
             and node.func.id == "capture_box_for_geometry"
         ]
 
+        # There are two legitimate global relocation paths:
+        # 1. the bounded periodic Windowed-mode fallback;
+        # 2. immediate relocation after a previously validated lock is lost.
+        #
+        # Both only discover an anchor. Neither path may establish geometry
+        # without complete tracker validation.
         self.assertEqual(1, len(calls))
 
         call = calls[0]
@@ -470,9 +488,12 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
             '"kt07_geometry"'
         )
 
-        # Initial/exhaustive calibration and local recalibration
-        # must both publish the newly validated geometry.
-        self.assertEqual(2, occurrences)
+        # Every path that establishes newly validated screen-space geometry
+        # must publish it to the overlay:
+        # 1. initial/exhaustive calibration;
+        # 2. local recalibration;
+        # 3. validated global relocation after a mode/resolution change.
+        self.assertEqual(3, occurrences)
 
         self.assertIn(
             "_protected_rect_for_geometry",
@@ -576,5 +597,107 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
         )
 
 
+
+    def test_lost_lock_triggers_immediate_global_relocation(self):
+        state_pos = self.worker_source.find(
+            'result.state=="unlocked"'
+        )
+
+        self.assertNotEqual(-1, state_pos)
+
+        block = self.worker_source[
+            state_pos:state_pos + 2600
+        ]
+
+        self.assertIn(
+            "locate_kt07_anchor_anywhere",
+            block,
+        )
+
+        self.assertIn(
+            '"capture_relocation_full"',
+            block,
+        )
+
+        self.assertIn(
+            '"anchor_relocation"',
+            block,
+        )
+
+
+    def test_relocated_anchor_requires_complete_tracker_validation(self):
+        state_pos = self.worker_source.find(
+            'result.state=="unlocked"'
+        )
+
+        self.assertNotEqual(-1, state_pos)
+
+        block = self.worker_source[
+            state_pos:state_pos + 3000
+        ]
+
+        self.assertIn(
+            "recovery_found=locate_kt07_anchor_anywhere",
+            block,
+        )
+
+        self.assertIn(
+            "recovery_result=tracker.decode",
+            block,
+        )
+
+        self.assertIn(
+            '"calibrated"',
+            block,
+        )
+
+        self.assertIn(
+            '"exhaustive-calibrated"',
+            block,
+        )
+
+
+    def test_relocation_updates_dynamic_overlay_protection(self):
+        state_pos = self.worker_source.find(
+            'result.state=="unlocked"'
+        )
+
+        self.assertNotEqual(-1, state_pos)
+
+        block = self.worker_source[
+            state_pos:state_pos + 3200
+        ]
+
+        self.assertIn(
+            '"kt07_geometry"',
+            block,
+        )
+
+        self.assertIn(
+            "_protected_rect_for_geometry",
+            block,
+        )
+
+
+    def test_relocation_does_not_directly_assign_discovered_geometry(self):
+        state_pos = self.worker_source.find(
+            'result.state=="unlocked"'
+        )
+
+        self.assertNotEqual(-1, state_pos)
+
+        block = self.worker_source[
+            state_pos:state_pos + 3000
+        ]
+
+        self.assertNotIn(
+            "tracker.geometry=geometry",
+            block,
+        )
+
+        self.assertNotIn(
+            "tracker.geometry=recovery_found",
+            block,
+        )
 if __name__ == "__main__":
     unittest.main()

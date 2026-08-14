@@ -408,45 +408,45 @@ def normalize_wow_terms(source, out):
 
     # Instances / group content
     if "dungeon" in low:
-        for bad in ("监狱", "地牢", "地下牢", "地下监狱"):
-            out = out.replace(bad, "地下城")
+        for bad in ("ç›‘ç‹±", "åœ°ç‰¢", "åœ°ä¸‹ç‰¢", "åœ°ä¸‹ç›‘ç‹±"):
+            out = out.replace(bad, "åœ°ä¸‹åŸŽ")
     if "battleground" in low or re.search(r"\bbg\b", low):
-        for bad in ("战斗场", "战斗场地", "战场地", "战斗地点"):
-            out = out.replace(bad, "战场")
+        for bad in ("æˆ˜æ–—åœº", "æˆ˜æ–—åœºåœ°", "æˆ˜åœºåœ°", "æˆ˜æ–—åœ°ç‚¹"):
+            out = out.replace(bad, "æˆ˜åœº")
     if "raid" in low:
-        for bad in ("突袭", "袭击", "团队地牢"):
-            out = out.replace(bad, "团队副本")
+        for bad in ("çªè¢­", "è¢­å‡»", "å›¢é˜Ÿåœ°ç‰¢"):
+            out = out.replace(bad, "å›¢é˜Ÿå‰¯æœ¬")
 
     # Roles
     if "healer" in low:
-        for bad in ("医医", "医生", "医师", "治疗师", "治疗者"):
-            out = out.replace(bad, "治疗")
+        for bad in ("åŒ»åŒ»", "åŒ»ç”Ÿ", "åŒ»å¸ˆ", "æ²»ç–—å¸ˆ", "æ²»ç–—è€…"):
+            out = out.replace(bad, "æ²»ç–—")
     if re.search(r"\btank(s)?\b", low):
-        for bad in ("坦克车", "战车"):
-            out = out.replace(bad, "坦克")
+        for bad in ("å¦å…‹è½¦", "æˆ˜è½¦"):
+            out = out.replace(bad, "å¦å…‹")
     if re.search(r"\bdps\b", low):
-        for bad in ("每秒伤害", "伤害输出"):
-            out = out.replace(bad, "输出")
+        for bad in ("æ¯ç§’ä¼¤å®³", "ä¼¤å®³è¾“å‡º"):
+            out = out.replace(bad, "è¾“å‡º")
 
     # Common WoW actions / social terms
     if "summon" in low:
-        for bad in ("召唤我", "召我", "召唤一下我"):
-            out = out.replace(bad, "拉我")
+        for bad in ("å¬å”¤æˆ‘", "å¬æˆ‘", "å¬å”¤ä¸€ä¸‹æˆ‘"):
+            out = out.replace(bad, "æ‹‰æˆ‘")
     if "guild" in low:
-        out = out.replace("行会", "公会")
+        out = out.replace("è¡Œä¼š", "å…¬ä¼š")
     if "party" in low and "party" not in ("birthday party",):
-        out = out.replace("聚会", "小队")
+        out = out.replace("èšä¼š", "å°é˜Ÿ")
 
     # Classes: normalize common alternate/literal translations.
     class_terms = {
-        "mage": [("魔法师","法师")],
-        "warrior": [("勇士","战士")],
-        "rogue": [("流氓","盗贼")],
-        "warlock": [("巫师","术士")],
-        "hunter": [("猎手","猎人")],
-        "priest": [("祭司","牧师")],
-        "paladin": [("圣武士","圣骑士")],
-        "shaman": [("巫医","萨满")],
+        "mage": [("é­”æ³•å¸ˆ","æ³•å¸ˆ")],
+        "warrior": [("å‹‡å£«","æˆ˜å£«")],
+        "rogue": [("æµæ°“","ç›—è´¼")],
+        "warlock": [("å·«å¸ˆ","æœ¯å£«")],
+        "hunter": [("çŒŽæ‰‹","çŒŽäºº")],
+        "priest": [("ç¥­å¸","ç‰§å¸ˆ")],
+        "paladin": [("åœ£æ­¦å£«","åœ£éª‘å£«")],
+        "shaman": [("å·«åŒ»","è¨æ»¡")],
     }
     for eng, reps in class_terms.items():
         if eng in low:
@@ -455,9 +455,9 @@ def normalize_wow_terms(source, out):
 
     # Major Classic cities
     cities = {
-        "orgrimmar": [("奥格里玛","奥格瑞玛")],
-        "stormwind": [("暴风","暴风城")],
-        "ironforge": [("铁炉","铁炉堡")],
+        "orgrimmar": [("å¥¥æ ¼é‡ŒçŽ›","å¥¥æ ¼ç‘žçŽ›")],
+        "stormwind": [("æš´é£Ž","æš´é£ŽåŸŽ")],
+        "ironforge": [("é“ç‚‰","é“ç‚‰å ¡")],
     }
     for eng,reps in cities.items():
         if eng in low:
@@ -465,11 +465,11 @@ def normalize_wow_terms(source, out):
                 out=out.replace(bad,good)
 
     # Chinese punctuation cleanup.
-    out = out.replace(" ,", "，").replace(",", "，")
-    out = out.replace(" .", "。")
-    if out.endswith("."): out=out[:-1]+"。"
-    if out.endswith("?"): out=out[:-1]+"？"
-    if out.endswith("!"): out=out[:-1]+"！"
+    out = out.replace(" ,", "ï¼Œ").replace(",", "ï¼Œ")
+    out = out.replace(" .", "ã€‚")
+    if out.endswith("."): out=out[:-1]+"ã€‚"
+    if out.endswith("?"): out=out[:-1]+"ï¼Ÿ"
+    if out.endswith("!"): out=out[:-1]+"ï¼"
     return out.strip()
 
 def contains_chinese(text):
@@ -480,23 +480,23 @@ def normalize_english_wow_terms(source, out):
     # Only apply a replacement if the corresponding Chinese concept is present
     # in the original source, to avoid changing unrelated English output.
     rules = [
-        ("战场", ("battlefield", "battle field", "field of battle"), "battleground"),
-        ("地下城", ("underground city", "underground dungeon", "instance"), "dungeon"),
-        ("团队副本", ("team copy", "team dungeon", "group copy"), "raid"),
-        ("治疗", ("treatment", "therapy", "healing person", "healing"), "healer"),
-        ("坦克", ("tank vehicle",), "tank"),
-        ("输出", ("output", "damage output"), "DPS"),
-        ("公会", ("association", "society"), "guild"),
-        ("小队", ("small team", "squad"), "party"),
-        ("法师", ("magician", "wizard"), "mage"),
-        ("战士", ("fighter",), "warrior"),
-        ("牧师", ("pastor", "clergyman"), "priest"),
-        ("盗贼", ("thief", "bandit"), "rogue"),
-        ("术士", ("sorcerer",), "warlock"),
-        ("猎人", ("huntsman",), "hunter"),
-        ("德鲁伊", ("druid",), "druid"),
-        ("圣骑士", ("holy knight",), "paladin"),
-        ("萨满", ("shaman",), "shaman"),
+        ("æˆ˜åœº", ("battlefield", "battle field", "field of battle"), "battleground"),
+        ("åœ°ä¸‹åŸŽ", ("underground city", "underground dungeon", "instance"), "dungeon"),
+        ("å›¢é˜Ÿå‰¯æœ¬", ("team copy", "team dungeon", "group copy"), "raid"),
+        ("æ²»ç–—", ("treatment", "therapy", "healing person", "healing"), "healer"),
+        ("å¦å…‹", ("tank vehicle",), "tank"),
+        ("è¾“å‡º", ("output", "damage output"), "DPS"),
+        ("å…¬ä¼š", ("association", "society"), "guild"),
+        ("å°é˜Ÿ", ("small team", "squad"), "party"),
+        ("æ³•å¸ˆ", ("magician", "wizard"), "mage"),
+        ("æˆ˜å£«", ("fighter",), "warrior"),
+        ("ç‰§å¸ˆ", ("pastor", "clergyman"), "priest"),
+        ("ç›—è´¼", ("thief", "bandit"), "rogue"),
+        ("æœ¯å£«", ("sorcerer",), "warlock"),
+        ("çŒŽäºº", ("huntsman",), "hunter"),
+        ("å¾·é²ä¼Š", ("druid",), "druid"),
+        ("åœ£éª‘å£«", ("holy knight",), "paladin"),
+        ("è¨æ»¡", ("shaman",), "shaman"),
     ]
     low_source=source.lower()
     for zh,bads,good in rules:
@@ -504,8 +504,8 @@ def normalize_english_wow_terms(source, out):
             for bad in bads:
                 out=re.sub(r"\b"+re.escape(bad)+r"\b",good,out,flags=re.I)
 
-    # Particularly common NLLB outputs for 战场.
-    if "战场" in source:
+    # Particularly common NLLB outputs for æˆ˜åœº.
+    if "æˆ˜åœº" in source:
         out=re.sub(r"\bthe battlefield\b","the battleground",out,flags=re.I)
         out=re.sub(r"\bbattlefield\b","battleground",out,flags=re.I)
 
@@ -561,8 +561,8 @@ def _strip_kt07_envelope(text):
 def translate_auto(text):
     text=_strip_kt07_envelope(text)
     if contains_chinese(text):
-        return translate_zh_to_en(text), "ZH→EN"
-    return translate_en_to_zh(text), "EN→ZH"
+        return translate_zh_to_en(text), "ZHâ†’EN"
+    return translate_en_to_zh(text), "ENâ†’ZH"
 
 import tkinter as tk
 from tkinter.scrolledtext import ScrolledText
@@ -771,7 +771,7 @@ rootui.bind("<Configure>",_on_overlay_configure,add="+")
 
 header=tk.Frame(rootui,bg="#181818",height=26)
 header.pack(fill="x")
-title=tk.Label(header,text="WoWInterpreter  英文 → 中文",bg="#181818",fg="#8fd3ff",
+title=tk.Label(header,text="WoWInterpreter  è‹±æ–‡ â†’ ä¸­æ–‡",bg="#181818",fg="#8fd3ff",
                font=("Microsoft YaHei UI",10,"bold"))
 title.pack(side="left",padx=7,pady=3)
 
@@ -794,10 +794,10 @@ def append_message(author,translation,direction="in",translation_direction=None)
 
     if direction=="out":
         # Label the local user in their source language:
-        # EN→ZH means an English-speaking user; ZH→EN means a Chinese-speaking user.
-        self_label="我" if translation_direction=="ZH→EN" else "Me"
+        # ENâ†’ZH means an English-speaking user; ZHâ†’EN means a Chinese-speaking user.
+        self_label="æˆ‘" if translation_direction=="ZHâ†’EN" else "Me"
         if author:
-            text.insert("end",self_label+" → "+author+": ","out_author")
+            text.insert("end",self_label+" â†’ "+author+": ","out_author")
         else:
             text.insert("end",self_label+": ","out_author")
         text.insert("end",translation+"\n","out_text")
@@ -1137,11 +1137,89 @@ def worker():
 
     elif result.state=="unlocked":
      transport_active=False
+
      print(
       "[KT07] Validated geometry lost after "
       "repeated decode failures; reacquiring anchor.",
       flush=True,
      )
+
+     # A previously validated geometry disappearing is strong evidence
+     # that WoW may have moved because of Fullscreen/Windowed mode,
+     # resolution, DPI/UI-scale or window-size changes.
+     #
+     # Do one immediate global relocation instead of waiting for the
+     # ordinary unlocked fallback counter. Discovery alone is NEVER
+     # trusted: the new anchor still has to produce a completely valid
+     # KT07 frame through tracker.decode().
+     _t=time.perf_counter()
+     recovery_im=ImageGrab.grab()
+     _perf_add(
+      "capture_relocation_full",
+      time.perf_counter()-_t,
+     )
+
+     _t=time.perf_counter()
+     recovery_found=locate_kt07_anchor_anywhere(
+      recovery_im
+     )
+     _perf_add(
+      "anchor_relocation",
+      time.perf_counter()-_t,
+     )
+
+     if recovery_found is not None:
+      ox,oy,cell,box=recovery_found
+
+      anchor_box=box
+      anchor_pitch=cell
+
+      _t=time.perf_counter()
+      recovery_result=tracker.decode(
+       recovery_im,
+       anchor_box,
+       anchor_pitch,
+      )
+      _perf_add(
+       "calibration",
+       time.perf_counter()-_t,
+      )
+
+      if recovery_result.state in (
+       "calibrated",
+       "exhaustive-calibrated",
+      ):
+       result=recovery_result
+       raw=recovery_result.text
+       transport_active=True
+       generic_fallback_misses=0
+
+       events.append((
+        "kt07_geometry",
+        _protected_rect_for_geometry(
+         recovery_result.geometry
+        ),
+       ))
+
+       print(
+        "[KT07] Geometry relocated after display "
+        "change: "
+        f"{recovery_result.geometry}",
+        flush=True,
+       )
+
+       debug_saved=False
+
+      else:
+       diag(
+        "KT07 relocation anchor found but complete "
+        "frame has not validated yet."
+       )
+
+     else:
+      diag(
+       "KT07 relocation scan found no valid anchor."
+      )
 
    # ---------------------------------------------------------
    # UNLOCKED
