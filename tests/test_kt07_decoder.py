@@ -277,5 +277,66 @@ class KT07DecoderTests(unittest.TestCase):
         self.assertLess(elapsed, 2.0, f"negative calibration took {elapsed:.3f}s")
 
 
+    def test_signal_probe_rejects_idle_background_near_kt07_levels(self):
+        geometry = Geometry(
+            7.5,
+            16.5,
+            5.875,
+            5.75,
+        )
+
+        # Simulate the transport area after the payload disappears.
+        # Background may be grayscale and numerically close to a KT07
+        # symbol level, but that alone must not count as active transport.
+        image = Image.new(
+            "RGB",
+            (360, 260),
+            (32, 32, 32),
+        )
+
+        self.assertFalse(
+            has_signal_at(image, geometry)
+        )
+
+    def test_signal_probe_detects_corrupted_real_transport(self):
+        geometry = Geometry(
+            7.5,
+            16.5,
+            5.875,
+            5.75,
+        )
+
+        image = render(
+            "active transport",
+            geometry,
+            size=(360, 260),
+        )
+
+        # Break validation later in the frame while leaving the transport
+        # header physically present.
+        draw = ImageDraw.Draw(image)
+        index = 5 * 4
+        col, row = index % COLS, index // COLS
+
+        x0 = int(round(
+            geometry.x + col * geometry.pitch_x
+        ))
+        y0 = int(round(
+            geometry.y + row * geometry.pitch_y
+        ))
+
+        draw.rectangle(
+            (x0, y0, x0 + 4, y0 + 4),
+            fill=(255, 0, 0),
+        )
+
+        self.assertIsNone(
+            decode_at(image, geometry)
+        )
+        self.assertTrue(
+            has_signal_at(image, geometry)
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

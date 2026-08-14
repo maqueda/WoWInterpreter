@@ -238,5 +238,88 @@ class KT07LiveCycleTests(unittest.TestCase):
         calibrate.assert_not_called()
 
 
+    def test_real_frame_idle_frame_then_new_frame_keeps_lock(self):
+        from PIL import Image
+
+        from tests.test_kt07_decoder import render
+
+        geometry = Geometry(
+            7.5,
+            16.5,
+            5.875,
+            5.75,
+        )
+
+        tracker = KT07GeometryTracker()
+        tracker.geometry = geometry
+
+        first_image = render(
+            "first message",
+            geometry,
+            size=(360, 260),
+        )
+
+        first = tracker.decode(
+            first_image,
+            ANCHOR,
+            PITCH,
+        )
+
+        self.assertEqual("fast", first.state)
+        self.assertEqual("first message", first.text)
+        self.assertEqual(geometry, tracker.geometry)
+
+        # Realistic idle background: numerically very close to IDEAL[0].
+        # This used to produce a false transport-positive and eventually
+        # destroy a perfectly valid geometry lock.
+        idle_image = Image.new(
+            "RGB",
+            (360, 260),
+            (32, 32, 32),
+        )
+
+        for _ in range(100):
+            idle = tracker.decode(
+                idle_image,
+                ANCHOR,
+                PITCH,
+            )
+
+            self.assertEqual("idle", idle.state)
+            self.assertTrue(tracker.locked)
+            self.assertEqual(
+                geometry,
+                tracker.geometry,
+            )
+
+        self.assertEqual(0, tracker.failures)
+        self.assertEqual(
+            0,
+            tracker.misses_since_lock,
+        )
+
+        second_image = render(
+            "second message",
+            geometry,
+            size=(360, 260),
+        )
+
+        second = tracker.decode(
+            second_image,
+            ANCHOR,
+            PITCH,
+        )
+
+        self.assertEqual("fast", second.state)
+        self.assertEqual(
+            "second message",
+            second.text,
+        )
+        self.assertEqual(
+            geometry,
+            tracker.geometry,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -112,37 +112,66 @@ def _quick_magic_prefix(im, geometry):
 
 
 def has_signal_at(im, geometry):
-    """Probe for KT07-like cells at an already validated geometry.
+    """Detect physical KT07 transport at validated geometry.
 
-    This is only a presence probe. It never establishes or validates
-    geometry; a geometry lock still requires full decode_at() validation.
+    This deliberately does not validate a complete frame. Its only job is
+    distinguishing an idle background from transport that is still visibly
+    present but whose frame failed full validation.
+
+    Require the characteristic MAGIC symbol pattern rather than merely
+    accepting pixels close to any KT07 grayscale level. A uniform dark
+    background can be close to IDEAL[0], but cannot reproduce this pattern.
     """
+    expected_symbols = []
+
+    for value in MAGIC:
+        expected_symbols.extend((
+            (value >> 6) & 3,
+            (value >> 4) & 3,
+            (value >> 2) & 3,
+            value & 3,
+        ))
+
     matches = 0
+    observed = 0
 
-    for index in (0, 1, 2, 3):
+    for index, expected in enumerate(expected_symbols):
         col, row = index % COLS, index // COLS
-        cx = geometry.x + (col + 0.5) * geometry.pitch_x
-        cy = geometry.y + (row + 0.5) * geometry.pitch_y
-        px, py = int(math.floor(cx)), int(math.floor(cy))
 
-        if not (0 <= px < im.width and 0 <= py < im.height):
+        cx = geometry.x + (
+            col + 0.5
+        ) * geometry.pitch_x
+        cy = geometry.y + (
+            row + 0.5
+        ) * geometry.pitch_y
+
+        px = int(math.floor(cx))
+        py = int(math.floor(cy))
+
+        if not (
+            0 <= px < im.width
+            and 0 <= py < im.height
+        ):
             continue
 
         r, g, b = im.getpixel((px, py))[:3]
 
-        # KT07 transport cells are grayscale.
         if max(r, g, b) - min(r, g, b) >= 35:
             continue
 
         level = (r + g + b) // 3
+        observed += 1
 
-        # Unlike _classify(), presence detection must reject pixels that
-        # merely happen to be closest to a KT07 level. This prevents an
-        # empty/dark background from looking like active transport.
-        if min(abs(level - ideal) for ideal in IDEAL) <= 18:
+        if abs(level - IDEAL[expected]) <= 18:
             matches += 1
 
-    return matches >= 2
+    # MAGIC contributes 16 symbols. Requiring a strong majority keeps this
+    # probe tolerant of a few noisy pixels while making uniform backgrounds
+    # and incidental grayscale UI extremely unlikely to count as transport.
+    return (
+        observed >= 12
+        and matches >= 12
+    )
 
 
 def read_byte(im, geometry, byte_index):
