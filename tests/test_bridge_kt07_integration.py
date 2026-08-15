@@ -664,6 +664,48 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
         self.assertIn("raw=pending_result.text", block)
         self.assertIn('"kt07_geometry"', block)
 
+    def test_pending_transition_requests_one_temporary_overlay_diagnostic(self):
+        marker = "if window_monitor.poll(_now):"
+        block = self.worker_source[self.worker_source.index(marker):]
+        block = block[:block.index("_perf_add(\"wow_window_state\"")]
+        self.assertIn("_was_pending=relocation_pending.pending", block)
+        self.assertIn("if not _was_pending:", block)
+        self.assertEqual(1, block.count('"kt07_overlay_capture_test"'))
+
+    def test_overlay_diagnostic_uses_exact_presence_capture(self):
+        marker = "presence_im=ImageGrab.grab(bbox=presence_box)"
+        block = self.worker_source[self.worker_source.index(marker):]
+        self.assertIn("overlay_test_image=presence_im.copy()", block)
+        self.assertNotIn("include_layered_windows", self.worker_source)
+
+    def test_overlay_diagnostic_tk_queries_are_ui_thread_only(self):
+        self.assertNotIn('rootui.attributes("-alpha")', self.worker_source)
+        self.assertNotIn("rootui.winfo_id()", self.worker_source)
+        self.assertNotIn("GetWindowLongW", self.worker_source)
+        collector = next(
+            node for node in self.tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "_collect_overlay_capture_test_state"
+        )
+        collector_source = ast.get_source_segment(self.source, collector)
+        self.assertIn('rootui.attributes("-alpha")', collector_source)
+        self.assertIn("rootui.winfo_id()", collector_source)
+        self.assertIn("GetWindowLongW", collector_source)
+
+    def test_ui_dispatches_overlay_diagnostic_without_changing_geometry(self):
+        poll_ui = next(
+            node for node in self.tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "poll_ui"
+        )
+        poll_source = ast.get_source_segment(self.source, poll_ui)
+        marker = 'kind=="kt07_overlay_capture_test"'
+        self.assertIn(marker, poll_source)
+        branch = poll_source[poll_source.index(marker):]
+        branch = branch[:branch.index("elif kind==\"msg_in\"")]
+        self.assertIn("_collect_overlay_capture_test_state(data)", branch)
+        self.assertNotIn("geometry(", branch)
+        self.assertNotIn("withdraw", branch)
+
     def test_global_locator_has_no_desktop_pixel_loops(self):
         helper = next(
             node for node in self.tree.body
