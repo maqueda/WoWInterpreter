@@ -6,6 +6,7 @@ length, checksum and UTF-8. MAGIC alone is never enough to lock geometry.
 from dataclasses import dataclass
 import math
 import statistics
+import time
 
 MAX_BYTES = 180
 COLS = 32
@@ -290,3 +291,45 @@ def decode_near_anchor(im, anchor_box, anchor_symbol_pitch=None, exhaustive=Fals
             if refined is not None:
                 return refined
     return None
+
+
+def decode_relocation_candidate(im, anchor_box, anchor_symbol_pitch):
+    """Strictly decode a localized relocation anchor in a bounded neighborhood."""
+    started = time.perf_counter()
+    left, _top, _right, bottom = anchor_box
+    hint = float(anchor_symbol_pitch)
+    pitches = tuple(_frange(max(1.75, hint - .75), min(10.0, hint + .75), .25))
+    pitch_pairs = _pitch_pairs(pitches, hint)
+    origins_started = time.perf_counter()
+    x_origins = tuple(_frange(max(0.0, left - 3.0), left + 3.0, .25))
+    # Lua places the payload one rendered anchor height below the anchor.
+    # Fractional UI scaling can move the rasterized box edge by a few pixels.
+    y_origins = tuple(_frange(max(0.0, bottom + hint - 3.0), bottom + hint + 3.0, .25))
+    origins = tuple((x, y) for y in y_origins for x in x_origins)
+    generation_seconds = time.perf_counter() - origins_started
+    decode_started = time.perf_counter()
+    attempts = 0
+    for pitch_x, pitch_y in pitch_pairs:
+        for x, y in origins:
+            attempts += 1
+            geometry = Geometry(x, y, pitch_x, pitch_y)
+            if not _quick_magic_prefix(im, geometry):
+                continue
+            decoded = decode_at(im, geometry)
+            if decoded is not None:
+                elapsed = time.perf_counter() - decode_started
+                return (decoded, geometry), {
+                    "geometry_generation_seconds": generation_seconds,
+                    "decode_seconds": elapsed,
+                    "total_seconds": time.perf_counter() - started,
+                    "decode_attempts": attempts,
+                    "geometry_candidates": len(pitch_pairs) * len(origins),
+                }
+    elapsed = time.perf_counter() - decode_started
+    return None, {
+        "geometry_generation_seconds": generation_seconds,
+        "decode_seconds": elapsed,
+        "total_seconds": time.perf_counter() - started,
+        "decode_attempts": attempts,
+        "geometry_candidates": len(pitch_pairs) * len(origins),
+    }

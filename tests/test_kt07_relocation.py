@@ -305,8 +305,8 @@ class KT07RelocationTests(unittest.TestCase):
         anchor = (8.0, 4.0, 4.5, (7, 1, 61, 10))
         local = Geometry(23.75, 9.0, 4.5, 4.5)
         with patch(
-            "Bridge.kt07_relocation.decode_near_anchor",
-            return_value=("first relocated payload", local),
+            "Bridge.kt07_relocation.decode_relocation_candidate",
+            return_value=(("first relocated payload", local), {}),
         ):
             result, anchor_box, pitch = validate_client_anchor_probe(
                 image, (300, 170), tracker, lambda _image: anchor
@@ -324,8 +324,8 @@ class KT07RelocationTests(unittest.TestCase):
         anchor = (8.0, 4.0, 4.5, (7, 1, 61, 10))
         local = Geometry(23.75, 9.0, 4.5, 4.25)
         with patch(
-            "Bridge.kt07_relocation.decode_near_anchor",
-            return_value=("first payload at B", local),
+            "Bridge.kt07_relocation.decode_relocation_candidate",
+            return_value=(("first payload at B", local), {}),
         ):
             decoded, diagnostic = inspect_client_anchor_probe(
                 Image.new("RGB", (420, 350)),
@@ -344,7 +344,10 @@ class KT07RelocationTests(unittest.TestCase):
         trusted = Geometry(8.0, 16.0, 3.0, 3.0)
         tracker.geometry = trusted
         anchor = (8.0, 4.0, 4.5, (7, 1, 61, 10))
-        with patch("Bridge.kt07_relocation.decode_near_anchor", return_value=None):
+        with patch(
+            "Bridge.kt07_relocation.decode_relocation_candidate",
+            return_value=(None, {}),
+        ):
             result = validate_client_anchor_probe(
                 Image.new("RGB", (420, 350)),
                 (300, 170),

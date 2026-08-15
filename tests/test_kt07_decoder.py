@@ -2,7 +2,7 @@ import time
 import unittest
 from PIL import Image, ImageDraw
 
-from Bridge.kt07_decoder import (COLS, Geometry, MAGIC, capture_box_for_geometry, decode_at, decode_near_anchor, has_signal_at)
+from Bridge.kt07_decoder import (COLS, Geometry, MAGIC, capture_box_for_geometry, decode_at, decode_near_anchor, decode_relocation_candidate, has_signal_at)
 
 IDEAL = (31, 92, 163, 224)
 
@@ -158,6 +158,45 @@ class KT07DecoderTests(unittest.TestCase):
         result = decode_near_anchor(image, (8, 2, 45, 8), 3.25)
         self.assertIsNotNone(result)
         self.assertEqual("我们需要一个治疗。", result[0])
+
+    def test_windowed_relocation_candidate_is_strict_and_bounded(self):
+        geometry = Geometry(3.75, 12.0, 4.5, 4.5)
+        image = render("first Windowed payload", geometry, size=(420, 350))
+        started = time.perf_counter()
+        result, diagnostic = decode_relocation_candidate(
+            image, (6, 0, 54, 8), 4.0
+        )
+        elapsed = time.perf_counter() - started
+        self.assertIsNotNone(result)
+        self.assertEqual("first Windowed payload", result[0])
+        self.assertAlmostEqual(3.75, result[1].x, delta=1.0)
+        self.assertAlmostEqual(12.0, result[1].y, delta=2.0)
+        self.assertEqual(4.5, result[1].pitch_x)
+        self.assertEqual(4.5, result[1].pitch_y)
+        self.assertLess(elapsed, 0.5)
+        self.assertLessEqual(diagnostic["decode_attempts"], diagnostic["geometry_candidates"])
+        self.assertLess(diagnostic["geometry_candidates"], 25_000)
+
+    def test_additive_checksum_can_accept_balanced_ascii_corruption(self):
+        original = b"first trailer deflation eul"
+        corrupted = bytearray(original)
+        corrupted[1] += 1
+        corrupted[2] -= 1
+        self.assertNotEqual(original, bytes(corrupted))
+        self.assertEqual(sum(original) % 256, sum(corrupted) % 256)
+        bytes(corrupted).decode("utf-8")
+
+    def test_failed_windowed_relocation_search_has_hard_candidate_bound(self):
+        image = Image.new("RGB", (420, 350), (92, 92, 92))
+        started = time.perf_counter()
+        result, diagnostic = decode_relocation_candidate(
+            image, (6, 0, 54, 8), 4.0
+        )
+        elapsed = time.perf_counter() - started
+        self.assertIsNone(result)
+        self.assertEqual(23_125, diagnostic["decode_attempts"])
+        self.assertEqual(23_125, diagnostic["geometry_candidates"])
+        self.assertLess(elapsed, 0.5)
 
     def test_checksum_corruption_is_rejected(self):
         geometry = Geometry(10.0, 15.0, 4.0, 4.0)

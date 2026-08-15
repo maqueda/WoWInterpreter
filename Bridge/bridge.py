@@ -1329,6 +1329,16 @@ def worker():
        locate_kt07_anchor,
       )
       _perf_add("relocation_pending_validation",time.perf_counter()-_t)
+      print(
+       "[KT07] Pending relocation validation timing: "
+       f"anchor_refinement_ms={pending_diagnostic['anchor_refinement_seconds']*1000:.1f} "
+       f"geometry_generation_ms={pending_diagnostic['geometry_generation_seconds']*1000:.1f} "
+       f"decode_attempts={pending_diagnostic['decode_attempts']} "
+       f"geometry_candidates={pending_diagnostic['geometry_candidates']} "
+       f"decode_ms={pending_diagnostic['decode_seconds']*1000:.1f} "
+       f"total_ms={pending_diagnostic['total_seconds']*1000:.1f} "
+       f"stage={pending_diagnostic['stage']}",flush=True
+      )
       # Validation may be expensive. Refresh native state before committing;
       # a capture from an intermediate move/resize must never replace newer
       # geometry.
@@ -1372,6 +1382,12 @@ def worker():
        f"candidate_anchor_roi={pending_diagnostic.get('candidate_anchor_roi') if pending_plausible else None} "
        f"candidate_anchor_absolute={pending_diagnostic.get('candidate_anchor_absolute') if pending_plausible else None} "
        f"decoded_geometry={pending_diagnostic.get('decoded_geometry') if pending_plausible else None} "
+       f"anchor_refinement_ms={pending_diagnostic.get('anchor_refinement_seconds',0)*1000:.1f} "
+       f"geometry_generation_ms={pending_diagnostic.get('geometry_generation_seconds',0)*1000:.1f} "
+       f"decode_attempts={pending_diagnostic.get('decode_attempts',0)} "
+       f"geometry_candidates={pending_diagnostic.get('geometry_candidates',0)} "
+       f"decode_ms={pending_diagnostic.get('decode_seconds',0)*1000:.1f} "
+       f"total_validation_ms={pending_diagnostic.get('total_seconds',0)*1000:.1f} "
        f"failure_stage={pending_diagnostic.get('stage') if pending_plausible else 'presence_prefilter_failed'}",
        flush=True,
       )

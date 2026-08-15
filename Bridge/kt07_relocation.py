@@ -3,11 +3,12 @@ from dataclasses import dataclass, replace
 import ctypes
 import ctypes.wintypes
 import math
+import time
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw
 
-from Bridge.kt07_decoder import decode_near_anchor
+from Bridge.kt07_decoder import decode_near_anchor, decode_relocation_candidate
 
 
 ANCHOR_COLORS = (
@@ -210,9 +211,19 @@ def inspect_client_anchor_probe(image, screen_offset, anchor_locator):
         "candidate_anchor_roi": None,
         "candidate_anchor_absolute": None,
         "decoded_geometry": None,
+        "anchor_refinement_seconds": 0.0,
+        "geometry_generation_seconds": 0.0,
+        "decode_seconds": 0.0,
+        "total_seconds": 0.0,
+        "decode_attempts": 0,
+        "geometry_candidates": 0,
     }
+    total_started = time.perf_counter()
+    anchor_started = time.perf_counter()
     found = anchor_locator(image)
+    diagnostic["anchor_refinement_seconds"] = time.perf_counter() - anchor_started
     if found is None:
+        diagnostic["total_seconds"] = time.perf_counter() - total_started
         return None, diagnostic
     _ox, _oy, pitch, local_anchor_box = found
     diagnostic["candidate_anchor_roi"] = local_anchor_box
@@ -220,9 +231,11 @@ def inspect_client_anchor_probe(image, screen_offset, anchor_locator):
         local_anchor_box, *screen_offset
     )
     diagnostic["stage"] = "strict_frame_validation_failed"
-    validated = decode_near_anchor(
-        image, local_anchor_box, pitch, exhaustive=False
+    validated, decode_diagnostic = decode_relocation_candidate(
+        image, local_anchor_box, pitch
     )
+    diagnostic.update(decode_diagnostic)
+    diagnostic["total_seconds"] = time.perf_counter() - total_started
     if validated is None:
         return None, diagnostic
     text, local_geometry = validated
