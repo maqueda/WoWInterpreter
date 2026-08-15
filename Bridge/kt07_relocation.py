@@ -1,5 +1,7 @@
 """Cheap, untrusted candidate discovery for displaced KT07 frames."""
-from dataclasses import replace
+from dataclasses import dataclass, replace
+import ctypes
+import ctypes.wintypes
 import math
 from pathlib import Path
 
@@ -20,6 +22,142 @@ ANCHOR_COLORS = (
 DISCOVERY_SCALE = 4
 DISCOVERY_TOLERANCE = 75
 MAX_CANDIDATES = 8
+PENDING_PROBE_INTERVAL = 0.5
+WINDOW_STATE_INTERVAL = 1.0
+
+
+@dataclass(frozen=True)
+class WoWWindowSnapshot:
+    client_rect: tuple
+    virtual_rect: tuple
+    style: int
+    ex_style: int
+    dpi: int
+
+
+def get_wow_window_snapshot():
+    """Return cheap Win32 state that changes when WoW's geometry changes."""
+    if not hasattr(ctypes, "windll"):
+        return None
+    user32 = ctypes.windll.user32
+    candidates = []
+    callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    @callback_type
+    def visit(hwnd, _lparam):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        title = ctypes.create_unicode_buffer(256)
+        class_name = ctypes.create_unicode_buffer(256)
+        user32.GetWindowTextW(hwnd, title, len(title))
+        user32.GetClassNameW(hwnd, class_name, len(class_name))
+        title_text = title.value.lower()
+        class_text = class_name.value.lower()
+        if "world of warcraft" not in title_text and "gxwindowclass" not in class_text:
+            return True
+        rect = ctypes.wintypes.RECT()
+        if user32.GetClientRect(hwnd, ctypes.byref(rect)):
+            area = max(0, rect.right - rect.left) * max(0, rect.bottom - rect.top)
+            if area:
+                candidates.append((area, hwnd, rect))
+        return True
+
+    try:
+        user32.EnumWindows(visit, 0)
+        if not candidates:
+            return None
+        _area, hwnd, rect = max(candidates, key=lambda item: item[0])
+        origin = ctypes.wintypes.POINT(0, 0)
+        extent = ctypes.wintypes.POINT(rect.right, rect.bottom)
+        if (
+            not user32.ClientToScreen(hwnd, ctypes.byref(origin))
+            or not user32.ClientToScreen(hwnd, ctypes.byref(extent))
+        ):
+            return None
+        to_physical = getattr(user32, "LogicalToPhysicalPointForPerMonitorDPI", None)
+        if to_physical:
+            to_physical(hwnd, ctypes.byref(origin))
+            to_physical(hwnd, ctypes.byref(extent))
+        client_rect = (
+            origin.x,
+            origin.y,
+            extent.x,
+            extent.y,
+        )
+        virtual_rect = (
+            user32.GetSystemMetrics(76),
+            user32.GetSystemMetrics(77),
+            user32.GetSystemMetrics(76) + user32.GetSystemMetrics(78),
+            user32.GetSystemMetrics(77) + user32.GetSystemMetrics(79),
+        )
+        get_dpi = getattr(user32, "GetDpiForWindow", None)
+        dpi = int(get_dpi(hwnd)) if get_dpi else 96
+        return WoWWindowSnapshot(
+            client_rect,
+            virtual_rect,
+            int(user32.GetWindowLongW(hwnd, -16)),
+            int(user32.GetWindowLongW(hwnd, -20)),
+            dpi,
+        )
+    except Exception:
+        return None
+
+
+class WoWWindowChangeMonitor:
+    """Poll inexpensive external evidence without invalidating geometry."""
+
+    def __init__(self, provider=get_wow_window_snapshot, interval=WINDOW_STATE_INTERVAL):
+        self.provider = provider
+        self.interval = float(interval)
+        self.snapshot = None
+        self.next_check = 0.0
+
+    def poll(self, now):
+        if now < self.next_check:
+            return False
+        self.next_check = now + self.interval
+        current = self.provider()
+        if current is None:
+            return False
+        changed = self.snapshot is not None and current != self.snapshot
+        self.snapshot = current
+        return changed
+
+
+class RelocationPendingState:
+    """Observe a small WoW-client ROI until the first KT07 frame appears."""
+
+    def __init__(self, interval=PENDING_PROBE_INTERVAL):
+        self.interval = float(interval)
+        self.pending = False
+        self.next_probe = 0.0
+
+    def enter(self, now):
+        self.pending = True
+        self.next_probe = now
+
+    def due(self, now):
+        return self.pending and now >= self.next_probe
+
+    def observation_due(self, now, window_available):
+        return window_available and now >= self.next_probe
+
+    def attempted(self, now):
+        self.next_probe = now + self.interval
+
+    def clear(self):
+        self.pending = False
+
+
+def client_anchor_probe_box(snapshot, width=420, height=350):
+    if snapshot is None:
+        return None
+    left, top, right, bottom = snapshot.client_rect
+    return left, top, min(right, left + width), min(bottom, top + height)
+
+
+def client_anchor_presence_box(snapshot, width=120, height=45):
+    return client_anchor_probe_box(snapshot, width, height)
 
 
 def reduced_discovery_image(image):
@@ -169,21 +307,94 @@ def discover_candidate_rois(image, max_candidates=MAX_CANDIDATES):
     return rois
 
 
-def save_discovery_diagnostic(image, directory, candidate_count):
+def save_discovery_diagnostic(
+    image,
+    directory,
+    candidate_count,
+    screen_offset=(0, 0),
+):
     """Overwrite one bounded diagnostic set; the caller controls throttling."""
     directory = Path(directory)
     full_path = directory / "kt07_relocation_failure.png"
     reduced_path = directory / "kt07_relocation_reduced.png"
+    closest_path = directory / "kt07_relocation_closest.png"
     meta_path = directory / "kt07_relocation_failure.txt"
     image.save(full_path)
-    reduced_discovery_image(image).save(reduced_path)
+    reduced = reduced_discovery_image(image)
+    reduced.save(reduced_path)
+    evidence = analyze_discovery_failure(reduced)
+    crop_box = evidence.pop("full_resolution_crop")
+    image.crop(crop_box).save(closest_path)
     meta_path.write_text(
         f"screen={image.width}x{image.height}\n"
+        f"screen_offset={screen_offset}\n"
         f"discovery_scale={DISCOVERY_SCALE}\n"
-        f"candidate_count={candidate_count}\n",
+        f"candidate_count={candidate_count}\n"
+        + "".join(f"{key}={value}\n" for key, value in evidence.items()),
         encoding="utf-8",
     )
-    return full_path, reduced_path, meta_path
+    return full_path, reduced_path, closest_path, meta_path
+
+
+def analyze_discovery_failure(reduced):
+    """Diagnostic-only native scoring of the closest six-color layout."""
+    channels = reduced.split()
+    masks = [
+        _color_mask(channels, color, DISCOVERY_TOLERANCE)
+        for color in ANCHOR_COLORS
+    ]
+    counts = tuple(mask.histogram()[255] for mask in masks)
+    unit_masks = [mask.point([0] * 255 + [1]) for mask in masks]
+    best_score = -1
+    best_pattern = DISCOVERY_PATTERNS[0]
+    best_origin = (0, 0)
+
+    for pattern in DISCOVERY_PATTERNS:
+        score = unit_masks[0]
+        for index in range(1, len(unit_masks)):
+            score = ImageChops.add(
+                score,
+                _shift_left(unit_masks[index], pattern[index]),
+            )
+        maximum = score.getextrema()[1]
+        if maximum > best_score:
+            best_score = maximum
+            best_pattern = pattern
+            peak = score.point(
+                [255 if value == maximum else 0 for value in range(256)]
+            ).getbbox()
+            best_origin = (peak[0], peak[1]) if peak else (0, 0)
+
+    samples = []
+    passes = []
+    for index, offset in enumerate(best_pattern):
+        x = min(reduced.width - 1, best_origin[0] + offset)
+        y = min(reduced.height - 1, best_origin[1])
+        sample = reduced.getpixel((x, y))[:3]
+        samples.append(sample)
+        passes.append(all(
+            abs(sample[channel] - ANCHOR_COLORS[index][channel])
+            <= DISCOVERY_TOLERANCE
+            for channel in range(3)
+        ))
+
+    full_x = best_origin[0] * DISCOVERY_SCALE
+    full_y = best_origin[1] * DISCOVERY_SCALE
+    return {
+        "color_mask_counts": counts,
+        "closest_match_count": best_score,
+        "closest_pattern": best_pattern,
+        "closest_reduced_origin": best_origin,
+        "closest_sample_rgb": tuple(samples),
+        "closest_color_passes": tuple(passes),
+        "sequence_present_in_reduced": best_score == len(ANCHOR_COLORS),
+        "full_resolution_crop": (
+            max(0, full_x - 24),
+            max(0, full_y - 24),
+            min(reduced.width * DISCOVERY_SCALE, full_x + 160),
+            min(reduced.height * DISCOVERY_SCALE, full_y + 80),
+        ),
+    }
 
 
 def offset_box(box, offset_x, offset_y):
@@ -220,3 +431,24 @@ def validate_candidate_rois(full_image, candidate_rois, tracker, anchor_locator)
         result = tracker.accept_validated_relocation(text, geometry)
         return result, anchor_box, pitch
     return None
+
+
+def validate_client_anchor_probe(image, screen_offset, tracker, anchor_locator):
+    """Validate one bounded client-top-left image and publish absolute geometry."""
+    found = anchor_locator(image)
+    if found is None:
+        return None
+    _ox, _oy, pitch, local_anchor_box = found
+    validated = decode_near_anchor(
+        image,
+        local_anchor_box,
+        pitch,
+        exhaustive=False,
+    )
+    if validated is None:
+        return None
+    text, local_geometry = validated
+    geometry = offset_geometry(local_geometry, *screen_offset)
+    anchor_box = offset_box(local_anchor_box, *screen_offset)
+    result = tracker.accept_validated_relocation(text, geometry)
+    return result, anchor_box, pitch

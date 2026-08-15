@@ -492,7 +492,7 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
         # 1. initial/exhaustive calibration;
         # 2. local recalibration;
         # 3. validated global relocation after a mode/resolution change.
-        self.assertEqual(4, occurrences)
+        self.assertEqual(5, occurrences)
 
         self.assertIn(
             "_protected_rect_for_geometry",
@@ -638,6 +638,31 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
         self.assertIn('result.state=="idle"', self.worker_source)
         self.assertIn("relocation_backoff.due", self.worker_source)
         self.assertIn("relocation_backoff.attempted", self.worker_source)
+
+    def test_window_change_enters_bounded_relocation_pending_mode(self):
+        self.assertIn("WoWWindowChangeMonitor", self.worker_source)
+        self.assertIn("RelocationPendingState", self.worker_source)
+        self.assertIn("window_monitor.poll", self.worker_source)
+        self.assertIn("relocation_pending.enter", self.worker_source)
+        self.assertIn("client_anchor_presence_box", self.worker_source)
+        self.assertIn("client_anchor_probe_box", self.worker_source)
+        self.assertIn("pending_plausible=fast_locate_kt07_anchor", self.worker_source)
+        self.assertIn("validate_client_anchor_probe", self.worker_source)
+
+    def test_native_window_observer_suppresses_global_discovery(self):
+        self.assertIn("window_monitor.snapshot is None", self.worker_source)
+
+    def test_normal_idle_uses_tiny_client_presence_observer(self):
+        self.assertIn("relocation_pending.observation_due", self.worker_source)
+        self.assertIn("ImageGrab.grab(bbox=presence_box)", self.worker_source)
+
+    def test_pending_relocation_emits_same_validated_frame(self):
+        marker = "pending_validated=validate_client_anchor_probe"
+        position = self.worker_source.find(marker)
+        self.assertNotEqual(-1, position)
+        block = self.worker_source[position:position + 1800]
+        self.assertIn("raw=pending_result.text", block)
+        self.assertIn('"kt07_geometry"', block)
 
     def test_global_locator_has_no_desktop_pixel_loops(self):
         helper = next(

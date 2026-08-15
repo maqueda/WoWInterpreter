@@ -7,8 +7,13 @@ from Bridge.kt07_tracker import KT07DuplicateSuppressor, KT07GeometryTracker
 from Bridge.kt07_decoder import capture_box_for_geometry
 from Bridge.kt07_relocation import (
     RelocationProbeBackoff,
+    RelocationPendingState,
+    WoWWindowChangeMonitor,
+    client_anchor_presence_box,
+    client_anchor_probe_box,
     discover_candidate_rois,
     save_discovery_diagnostic,
+    validate_client_anchor_probe,
     validate_candidate_rois,
 )
 
@@ -104,11 +109,11 @@ def _validate_relocation(full_image, tracker, candidate_rois=None):
     )
 
 
-def _save_relocation_diagnostic(image, candidate_count):
+def _save_relocation_diagnostic(image, candidate_count, screen_offset=(0,0)):
     """Overwrite a bounded diagnostic set for real Windowed-mode failures."""
     try:
         paths=save_discovery_diagnostic(
-            image,HERE,candidate_count
+            image,HERE,candidate_count,screen_offset
         )
         print(
             "[KT07] Relocation diagnostic updated: "
@@ -1031,12 +1036,24 @@ def worker():
  generic_fallback_misses=0
  relocation_backoff=RelocationProbeBackoff()
  relocation_backoff.reset(time.monotonic())
+ window_monitor=WoWWindowChangeMonitor()
+ relocation_pending=RelocationPendingState()
  relocation_diag_at=0.0
 
  while True:
   try:
    raw=None
    result=None
+
+   _now=time.monotonic()
+   _t=time.perf_counter()
+   if window_monitor.poll(_now):
+    relocation_pending.enter(_now)
+    print(
+     "[KT07] WoW window/display geometry changed; "
+     "relocation pending.",flush=True
+    )
+   _perf_add("wow_window_state",time.perf_counter()-_t)
 
    # ---------------------------------------------------------
    # LOCKED
@@ -1094,6 +1111,7 @@ def worker():
 
     elif result.state=="local-recalibrated":
      transport_active=True
+     relocation_pending.clear()
 
      events.append((
       "kt07_geometry",
@@ -1206,6 +1224,7 @@ def worker():
        result,anchor_box,anchor_pitch=relocated
        raw=result.text
        transport_active=True
+       relocation_pending.clear()
        events.append((
         "kt07_geometry",
         _protected_rect_for_geometry(result.geometry),
@@ -1242,6 +1261,7 @@ def worker():
        "exhaustive-calibrated",
       ):
        transport_active=True
+       relocation_pending.clear()
 
        events.append((
         "kt07_geometry",
@@ -1289,12 +1309,79 @@ def worker():
       )
       debug_saved=True
 
-   # A moved KT07 looks idle at the old trusted geometry. Probe at a low,
-   # exponentially backed-off cadence without destroying that lock.
+   # KT07 is fixed at WoW's client top-left. Observe only its tiny anchor
+   # region at a cadence shorter than the three-second transport lifetime.
+   # Window changes mark relocation pending, while this cheap observer also
+   # covers in-game UI-scale changes that do not alter HWND geometry.
    if (
     tracker.locked
     and result is not None
     and result.state=="idle"
+    and relocation_pending.observation_due(
+     time.monotonic(),window_monitor.snapshot is not None
+    )
+   ):
+    presence_box=client_anchor_presence_box(window_monitor.snapshot)
+    pending_box=client_anchor_probe_box(window_monitor.snapshot)
+    if presence_box is not None and pending_box is not None:
+     _t=time.perf_counter()
+     presence_im=ImageGrab.grab(bbox=presence_box)
+     _perf_add("capture_relocation_presence",time.perf_counter()-_t)
+
+     _t=time.perf_counter()
+     pending_plausible=fast_locate_kt07_anchor(presence_im)
+     _perf_add("relocation_pending_presence",time.perf_counter()-_t)
+
+     pending_validated=None
+     if pending_plausible:
+      _t=time.perf_counter()
+      pending_im=ImageGrab.grab(bbox=pending_box)
+      _perf_add("capture_relocation_pending",time.perf_counter()-_t)
+
+      _t=time.perf_counter()
+      pending_validated=validate_client_anchor_probe(
+       pending_im,
+       (pending_box[0],pending_box[1]),
+       tracker,
+       locate_kt07_anchor,
+      )
+      _perf_add("relocation_pending_validation",time.perf_counter()-_t)
+     relocation_pending.attempted(time.monotonic())
+
+     if pending_validated is not None:
+      pending_result,anchor_box,anchor_pitch=pending_validated
+      result=pending_result
+      raw=pending_result.text
+      transport_active=True
+      relocation_pending.clear()
+      events.append((
+       "kt07_geometry",
+       _protected_rect_for_geometry(pending_result.geometry),
+      ))
+      print(
+       "[KT07] Geometry relocated from pending client probe: "
+       f"{pending_result.geometry}",flush=True
+      )
+      debug_saved=False
+     elif (
+      relocation_pending.pending
+      and time.monotonic()-relocation_diag_at>=60.0
+     ):
+      if not pending_plausible:
+       pending_im=ImageGrab.grab(bbox=pending_box)
+      _save_relocation_diagnostic(
+       pending_im,0,(pending_box[0],pending_box[1])
+      )
+      relocation_diag_at=time.monotonic()
+
+   # Preserve a rare global fallback only when WoW's native client cannot be
+   # identified. With an HWND, the bounded observer also covers UI-scale
+   # changes without putting desktop capture back into the idle hot path.
+   if (
+    tracker.locked
+    and result is not None
+    and result.state=="idle"
+    and window_monitor.snapshot is None
     and relocation_backoff.due(time.monotonic())
    ):
     _t=time.perf_counter()
