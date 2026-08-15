@@ -647,7 +647,7 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
         self.assertIn("client_anchor_presence_box", self.worker_source)
         self.assertIn("client_anchor_probe_box", self.worker_source)
         self.assertIn("pending_plausible=fast_locate_kt07_anchor", self.worker_source)
-        self.assertIn("validate_client_anchor_probe", self.worker_source)
+        self.assertIn("inspect_client_anchor_probe", self.worker_source)
 
     def test_native_window_observer_suppresses_global_discovery(self):
         self.assertIn("window_monitor.snapshot is None", self.worker_source)
@@ -657,54 +657,33 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
         self.assertIn("ImageGrab.grab(bbox=presence_box)", self.worker_source)
 
     def test_pending_relocation_emits_same_validated_frame(self):
-        marker = "pending_validated=validate_client_anchor_probe"
+        marker = "pending_decoded,pending_diagnostic=inspect_client_anchor_probe"
         position = self.worker_source.find(marker)
         self.assertNotEqual(-1, position)
         block = self.worker_source[position:position + 1800]
         self.assertIn("raw=pending_result.text", block)
         self.assertIn('"kt07_geometry"', block)
 
-    def test_pending_transition_requests_one_temporary_overlay_diagnostic(self):
-        marker = "if window_monitor.poll(_now):"
+    def test_pending_validation_is_snapshot_bound_and_commits_after_refresh(self):
+        marker = "pending_attempt=relocation_pending.attempt()"
         block = self.worker_source[self.worker_source.index(marker):]
-        block = block[:block.index("_perf_add(\"wow_window_state\"")]
-        self.assertIn("_was_pending=relocation_pending.pending", block)
-        self.assertIn("if not _was_pending:", block)
-        self.assertEqual(1, block.count('"kt07_overlay_capture_test"'))
+        self.assertIn("pending_snapshot=pending_attempt[1]", block)
+        self.assertIn("window_monitor.poll(time.monotonic(),force=True)", block)
+        self.assertIn("relocation_pending.is_current(pending_attempt)", block)
+        commit = block.index("tracker.accept_validated_relocation")
+        refresh = block.index("window_monitor.poll(time.monotonic(),force=True)")
+        self.assertLess(refresh, commit)
 
-    def test_overlay_diagnostic_uses_exact_presence_capture(self):
-        marker = "presence_im=ImageGrab.grab(bbox=presence_box)"
-        block = self.worker_source[self.worker_source.index(marker):]
-        self.assertIn("overlay_test_image=presence_im.copy()", block)
-        self.assertNotIn("include_layered_windows", self.worker_source)
-
-    def test_overlay_diagnostic_tk_queries_are_ui_thread_only(self):
-        self.assertNotIn('rootui.attributes("-alpha")', self.worker_source)
-        self.assertNotIn("rootui.winfo_id()", self.worker_source)
-        self.assertNotIn("GetWindowLongW", self.worker_source)
-        collector = next(
-            node for node in self.tree.body
-            if isinstance(node, ast.FunctionDef)
-            and node.name == "_collect_overlay_capture_test_state"
+    def test_initial_native_snapshot_is_bound_before_client_probe(self):
+        marker = "pending_attempt=relocation_pending.attempt()"
+        prefix = self.worker_source[max(0, self.worker_source.index(marker) - 180):self.worker_source.index(marker)]
+        self.assertIn(
+            "relocation_pending.snapshot != window_monitor.snapshot",
+            prefix,
         )
-        collector_source = ast.get_source_segment(self.source, collector)
-        self.assertIn('rootui.attributes("-alpha")', collector_source)
-        self.assertIn("rootui.winfo_id()", collector_source)
-        self.assertIn("GetWindowLongW", collector_source)
 
-    def test_ui_dispatches_overlay_diagnostic_without_changing_geometry(self):
-        poll_ui = next(
-            node for node in self.tree.body
-            if isinstance(node, ast.FunctionDef) and node.name == "poll_ui"
-        )
-        poll_source = ast.get_source_segment(self.source, poll_ui)
-        marker = 'kind=="kt07_overlay_capture_test"'
-        self.assertIn(marker, poll_source)
-        branch = poll_source[poll_source.index(marker):]
-        branch = branch[:branch.index("elif kind==\"msg_in\"")]
-        self.assertIn("_collect_overlay_capture_test_state(data)", branch)
-        self.assertNotIn("geometry(", branch)
-        self.assertNotIn("withdraw", branch)
+    def test_temporary_overlay_contamination_diagnostic_is_removed(self):
+        self.assertNotIn("kt07_overlay_capture_test", self.source)
 
     def test_global_locator_has_no_desktop_pixel_loops(self):
         helper = next(

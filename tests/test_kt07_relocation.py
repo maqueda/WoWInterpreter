@@ -16,6 +16,8 @@ from Bridge.kt07_relocation import (
     client_anchor_presence_box,
     client_anchor_probe_box,
     discover_candidate_rois,
+    inspect_client_anchor_probe,
+    locate_client_anchor,
     offset_box,
     offset_geometry,
     save_discovery_diagnostic,
@@ -76,6 +78,32 @@ class KT07RelocationTests(unittest.TestCase):
         self.assertTrue(observer.observation_due(1_000_000.5, True))
         self.assertFalse(observer.observation_due(2_000_000, False))
 
+    def test_pending_state_keeps_latest_window_geometry(self):
+        pending = RelocationPendingState(interval=0.5)
+        geometry_a = self._snapshot((300, 170, 1600, 1000))
+        intermediate = self._snapshot((420, 240, 1500, 900))
+        geometry_b = self._snapshot((640, 360, 1840, 1060))
+
+        pending.enter(1.0, geometry_a)
+        stale_a = pending.attempt()
+        pending.enter(1.1, intermediate)
+        stale_intermediate = pending.attempt()
+        pending.enter(1.2, geometry_b)
+
+        self.assertFalse(pending.is_current(stale_a))
+        self.assertFalse(pending.is_current(stale_intermediate))
+        self.assertEqual(geometry_b, pending.attempt()[1])
+        self.assertEqual((640, 360, 1060, 710), client_anchor_probe_box(pending.snapshot))
+
+    def test_forced_monitor_refresh_detects_change_during_validation(self):
+        geometry_a = self._snapshot((300, 170, 1600, 1000))
+        geometry_b = self._snapshot((640, 360, 1840, 1060))
+        values = iter((geometry_a, geometry_b))
+        monitor = WoWWindowChangeMonitor(lambda: next(values), interval=60)
+        self.assertFalse(monitor.poll(0))
+        self.assertTrue(monitor.poll(0.1, force=True))
+        self.assertEqual(geometry_b, monitor.snapshot)
+
     @staticmethod
     def _anchor_image(width, x, y, size=(900, 600)):
         image = Image.new("RGB", size, (20, 20, 20))
@@ -98,6 +126,13 @@ class KT07RelocationTests(unittest.TestCase):
                             201 + y_phase,
                         )
                         self.assertTrue(discover_candidate_rois(image))
+
+    def test_client_anchor_locator_accepts_every_raster_phase_after_move(self):
+        for x in range(3, 7):
+            for y in range(3, 7):
+                with self.subTest(x=x, y=y):
+                    image = self._anchor_image(9, x, y, size=(120, 45))
+                    self.assertIsNotNone(locate_client_anchor(image))
 
     def test_displaced_anchor_produces_small_candidate_roi(self):
         image = Image.new("RGB", (1000, 700), (20, 20, 20))
@@ -281,6 +316,28 @@ class KT07RelocationTests(unittest.TestCase):
         self.assertEqual(result.geometry, tracker.geometry)
         self.assertEqual((307, 171, 361, 180), anchor_box)
         self.assertEqual(4.5, pitch)
+
+    def test_probe_can_decode_without_committing_stale_geometry(self):
+        tracker = KT07GeometryTracker()
+        trusted = Geometry(323.75, 179.0, 4.5, 4.5)
+        tracker.geometry = trusted
+        anchor = (8.0, 4.0, 4.5, (7, 1, 61, 10))
+        local = Geometry(23.75, 9.0, 4.5, 4.25)
+        with patch(
+            "Bridge.kt07_relocation.decode_near_anchor",
+            return_value=("first payload at B", local),
+        ):
+            decoded, diagnostic = inspect_client_anchor_probe(
+                Image.new("RGB", (420, 350)),
+                (640, 360),
+                lambda _image: anchor,
+            )
+        self.assertEqual(trusted, tracker.geometry)
+        self.assertEqual("validated", diagnostic["stage"])
+        self.assertEqual(Geometry(663.75, 369.0, 4.5, 4.25), decoded[1])
+        result = tracker.accept_validated_relocation(decoded[0], decoded[1])
+        self.assertEqual("first payload at B", result.text)
+        self.assertEqual(decoded[1], tracker.geometry)
 
     def test_invalid_pending_candidate_preserves_trusted_geometry(self):
         tracker = KT07GeometryTracker()

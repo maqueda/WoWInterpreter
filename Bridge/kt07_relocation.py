@@ -26,6 +26,49 @@ PENDING_PROBE_INTERVAL = 0.5
 WINDOW_STATE_INTERVAL = 1.0
 
 
+def locate_client_anchor(image, tolerance=80):
+    """Locate the KT07 anchor in its bounded client-top-left region.
+
+    Search every raster phase. Window moves can change fractional-DPI
+    rounding, so a two-pixel stride is not safe across relocations.
+    """
+    max_w = min(image.width, 120)
+    max_h = min(image.height, 45)
+    for width in range(4, 17):
+        half = max(1, int(round(width * .25)))
+        for cy in range(half, max_h - half):
+            for cx in range(half, max_w - 6 * width - half):
+                valid = True
+                for index, target in enumerate(ANCHOR_COLORS):
+                    px = cx + index * width
+                    points = [
+                        image.getpixel((px + sx, cy + sy))
+                        for sx in (-half, 0, half)
+                        for sy in (-half, 0, half)
+                        if 0 <= px + sx < image.width and 0 <= cy + sy < image.height
+                    ]
+                    close = sum(
+                        all(abs(point[channel] - target[channel]) <= tolerance
+                            for channel in range(3))
+                        for point in points
+                    )
+                    if close < max(3, len(points) // 2):
+                        valid = False
+                        break
+                if valid:
+                    scale = width / 8.0
+                    pitch = width / 2.0
+                    left = cx - width / 2.0
+                    top = cy - width / 2.0
+                    return (
+                        left + 2 * scale,
+                        top + 10 * scale,
+                        pitch,
+                        (round(left), round(top), round(left + 6 * width), round(top + width)),
+                    )
+    return None
+
+
 @dataclass(frozen=True)
 class WoWWindowSnapshot:
     client_rect: tuple
@@ -112,8 +155,8 @@ class WoWWindowChangeMonitor:
         self.snapshot = None
         self.next_check = 0.0
 
-    def poll(self, now):
-        if now < self.next_check:
+    def poll(self, now, force=False):
+        if not force and now < self.next_check:
             return False
         self.next_check = now + self.interval
         current = self.provider()
@@ -131,10 +174,21 @@ class RelocationPendingState:
         self.interval = float(interval)
         self.pending = False
         self.next_probe = 0.0
+        self.snapshot = None
+        self.generation = 0
 
-    def enter(self, now):
+    def enter(self, now, snapshot=None):
         self.pending = True
         self.next_probe = now
+        self.snapshot = snapshot
+        self.generation += 1
+
+    def attempt(self):
+        """Return the immutable window state identifying the next probe."""
+        return self.generation, self.snapshot
+
+    def is_current(self, attempt):
+        return self.pending and attempt == (self.generation, self.snapshot)
 
     def due(self, now):
         return self.pending and now >= self.next_probe
@@ -147,6 +201,35 @@ class RelocationPendingState:
 
     def clear(self):
         self.pending = False
+
+
+def inspect_client_anchor_probe(image, screen_offset, anchor_locator):
+    """Decode a bounded probe without publishing its untrusted geometry."""
+    diagnostic = {
+        "stage": "anchor_not_found",
+        "candidate_anchor_roi": None,
+        "candidate_anchor_absolute": None,
+        "decoded_geometry": None,
+    }
+    found = anchor_locator(image)
+    if found is None:
+        return None, diagnostic
+    _ox, _oy, pitch, local_anchor_box = found
+    diagnostic["candidate_anchor_roi"] = local_anchor_box
+    diagnostic["candidate_anchor_absolute"] = offset_box(
+        local_anchor_box, *screen_offset
+    )
+    diagnostic["stage"] = "strict_frame_validation_failed"
+    validated = decode_near_anchor(
+        image, local_anchor_box, pitch, exhaustive=False
+    )
+    if validated is None:
+        return None, diagnostic
+    text, local_geometry = validated
+    geometry = offset_geometry(local_geometry, *screen_offset)
+    diagnostic["decoded_geometry"] = geometry
+    diagnostic["stage"] = "validated"
+    return (text, geometry, diagnostic["candidate_anchor_absolute"], pitch), diagnostic
 
 
 def client_anchor_probe_box(snapshot, width=420, height=350):
@@ -435,20 +518,11 @@ def validate_candidate_rois(full_image, candidate_rois, tracker, anchor_locator)
 
 def validate_client_anchor_probe(image, screen_offset, tracker, anchor_locator):
     """Validate one bounded client-top-left image and publish absolute geometry."""
-    found = anchor_locator(image)
-    if found is None:
-        return None
-    _ox, _oy, pitch, local_anchor_box = found
-    validated = decode_near_anchor(
-        image,
-        local_anchor_box,
-        pitch,
-        exhaustive=False,
+    decoded, _diagnostic = inspect_client_anchor_probe(
+        image, screen_offset, anchor_locator
     )
-    if validated is None:
+    if decoded is None:
         return None
-    text, local_geometry = validated
-    geometry = offset_geometry(local_geometry, *screen_offset)
-    anchor_box = offset_box(local_anchor_box, *screen_offset)
+    text, geometry, anchor_box, pitch = decoded
     result = tracker.accept_validated_relocation(text, geometry)
     return result, anchor_box, pitch

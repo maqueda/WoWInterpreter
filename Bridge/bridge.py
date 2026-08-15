@@ -12,8 +12,9 @@ from Bridge.kt07_relocation import (
     client_anchor_presence_box,
     client_anchor_probe_box,
     discover_candidate_rois,
+    inspect_client_anchor_probe,
+    locate_client_anchor,
     save_discovery_diagnostic,
-    validate_client_anchor_probe,
     validate_candidate_rois,
 )
 
@@ -69,28 +70,7 @@ def locate_kt07_anchor(im):
       return None
     except Exception:
      pass
-    """Locate ordered RGB/YCM anchor in the fixed top-left WoW UI region."""
-    max_w=min(im.width,420); max_h=min(im.height,260)
-    for d in range(4,17): # rendered width of one 8-UI-unit anchor block
-        half=max(1,int(round(d*.25)))
-        for cy in range(half,max_h-half,2):
-            for cx in range(half,max_w-6*d-half,2):
-                valid=True
-                for i,target in enumerate(ANCHOR_COLORS):
-                    px=cx+i*d
-                    pts=[im.getpixel((px+sx,cy+sy))
-                         for sx in (-half,0,half) for sy in (-half,0,half)
-                         if 0<=px+sx<im.width and 0<=cy+sy<im.height]
-                    if sum(_near_color(p,target) for p in pts)<max(3,len(pts)//2):
-                        valid=False; break
-                if valid:
-                    scale=d/8.0; cell=d/2.0
-                    left=cx-d/2.0; top=cy-d/2.0
-                    ox=left+2*scale
-                    oy=top+10*scale
-                    box=(round(left),round(top),round(left+6*d),round(top+d))
-                    return ox,oy,cell,box
-    return None
+    return locate_client_anchor(im)
 
 def locate_kt07_anchor_anywhere(im):
     """Return candidate ROIs; discovery is never trusted as geometry."""
@@ -550,12 +530,10 @@ import tkinter as tk
 from tkinter.scrolledtext import ScrolledText
 import threading
 from collections import deque
-from queue import Empty, Queue
+from queue import Empty
 print("[BRIDGE] Module imports complete.", flush=True)
 
 events=deque()
-# TEMPORARY DIAGNOSTIC: UI-thread overlay facts returned to the capture worker.
-_overlay_capture_test_states=Queue()
 desired_geometry=None
 screen_h=None
 
@@ -606,73 +584,6 @@ def _overlay_rect():
     w=max(1,rootui.winfo_width()); h=max(1,rootui.winfo_height())
     return x,y,x+w,y+h
 
-
-def _collect_overlay_capture_test_state(request):
-    """Collect Tk/Win32 facts on the UI thread for one relocation transition."""
-    transition_id,wow_client_rect,captured_rect=request
-    overlay_rect=_overlay_rect()
-    alpha=None
-    hwnd=0
-    exstyle=0
-    try:
-        alpha=rootui.attributes("-alpha")
-    except Exception:
-        pass
-    try:
-        import ctypes
-        child_hwnd=int(rootui.winfo_id())
-        user32=ctypes.windll.user32
-        user32.GetAncestor.argtypes=(ctypes.c_void_p,ctypes.c_uint)
-        user32.GetAncestor.restype=ctypes.c_void_p
-        user32.GetWindowLongW.argtypes=(ctypes.c_void_p,ctypes.c_int)
-        user32.GetWindowLongW.restype=ctypes.c_long
-        root_hwnd=user32.GetAncestor(ctypes.c_void_p(child_hwnd),2)
-        hwnd=int(root_hwnd) if root_hwnd else child_hwnd
-        exstyle=int(user32.GetWindowLongW(hwnd,-20)) & 0xFFFFFFFF
-    except Exception:
-        pass
-    _overlay_capture_test_states.put((transition_id,{
-        "overlay_rect":overlay_rect,
-        "old_kt07_protected_rect":KT07_PROTECTED_RECT,
-        "wow_client_rect":wow_client_rect,
-        "captured_rect":captured_rect,
-        "overlay_hwnd":hwnd,
-        "overlay_exstyle":exstyle,
-        "ws_ex_layered":bool(exstyle & 0x00080000),
-        "tkinter_alpha":alpha,
-        "geometric_overlap_with_pending_region":_rects_overlap(
-            overlay_rect,captured_rect
-        ),
-    }))
-
-
-def _save_overlay_capture_test(image,state):
-    """TEMPORARY: save exactly one production-semantics presence capture."""
-    png=HERE/"kt07_overlay_capture_test.png"
-    txt=HERE/"kt07_overlay_capture_test.txt"
-    try:
-        image.save(png)
-        lines=[
-            f"overlay_rect={state['overlay_rect']}",
-            f"old_kt07_protected_rect={state['old_kt07_protected_rect']}",
-            f"wow_client_rect={state['wow_client_rect']}",
-            f"captured_rect={state['captured_rect']}",
-            f"overlay_hwnd={state['overlay_hwnd']}",
-            f"overlay_exstyle=0x{state['overlay_exstyle']:08X}",
-            f"ws_ex_layered={str(state['ws_ex_layered']).lower()}",
-            f"tkinter_alpha={state['tkinter_alpha']}",
-            "imagegrab_include_layered_windows=false",
-            "imagegrab_call=ImageGrab.grab(bbox=presence_box)",
-            "geometric_overlap_with_pending_region="
-            f"{str(state['geometric_overlap_with_pending_region']).lower()}",
-        ]
-        txt.write_text("\n".join(lines)+"\n",encoding="utf-8")
-        print(
-            "[OVERLAY] Temporary KT07 capture diagnostic saved: "
-            f"{png} and {txt}",flush=True
-        )
-    except Exception as exc:
-        print("[OVERLAY] Temporary capture diagnostic failed:",exc,flush=True)
 
 def _rects_overlap(a,b):
     return not (a[2] <= b[0] or a[0] >= b[2] or a[3] <= b[1] or a[1] >= b[3])
@@ -910,9 +821,6 @@ def poll_ui():
         if kind=="kt07_geometry":
             _apply_kt07_protected_rect(data)
 
-        elif kind=="kt07_overlay_capture_test":
-            _collect_overlay_capture_test_state(data)
-
         elif kind=="msg_in":
             author,out=data
             append_message(author,out,"in")
@@ -1113,54 +1021,15 @@ def worker():
  window_monitor=WoWWindowChangeMonitor()
  relocation_pending=RelocationPendingState()
  relocation_diag_at=0.0
- # TEMPORARY DIAGNOSTIC state. One captured presence image per transition.
- overlay_test_transition=0
- overlay_test_image=None
- overlay_test_state=None
- overlay_test_written=True
-
  while True:
   try:
    raw=None
    result=None
 
-   try:
-    while True:
-     _test_id,_test_state=_overlay_capture_test_states.get_nowait()
-     if _test_id==overlay_test_transition:
-      overlay_test_state=_test_state
-   except Empty:
-    pass
-   if (
-    not overlay_test_written
-    and overlay_test_image is not None
-    and overlay_test_state is not None
-   ):
-    _save_overlay_capture_test(overlay_test_image,overlay_test_state)
-    overlay_test_written=True
-    overlay_test_image=None
-    overlay_test_state=None
-
    _now=time.monotonic()
    _t=time.perf_counter()
    if window_monitor.poll(_now):
-    _was_pending=relocation_pending.pending
-    relocation_pending.enter(_now)
-    if not _was_pending:
-     overlay_test_transition+=1
-     overlay_test_image=None
-     overlay_test_state=None
-     overlay_test_written=False
-     _presence_box=client_anchor_presence_box(window_monitor.snapshot)
-     if _presence_box is not None:
-      events.append((
-       "kt07_overlay_capture_test",
-       (
-        overlay_test_transition,
-        window_monitor.snapshot.client_rect,
-        _presence_box,
-       ),
-      ))
+    relocation_pending.enter(_now,window_monitor.snapshot)
     print(
      "[KT07] WoW window/display geometry changed; "
      "relocation pending.",flush=True
@@ -1433,29 +1302,16 @@ def worker():
      time.monotonic(),window_monitor.snapshot is not None
     )
    ):
-    presence_box=client_anchor_presence_box(window_monitor.snapshot)
-    pending_box=client_anchor_probe_box(window_monitor.snapshot)
+    if relocation_pending.snapshot != window_monitor.snapshot:
+     relocation_pending.enter(time.monotonic(),window_monitor.snapshot)
+    pending_attempt=relocation_pending.attempt()
+    pending_snapshot=pending_attempt[1]
+    presence_box=client_anchor_presence_box(pending_snapshot)
+    pending_box=client_anchor_probe_box(pending_snapshot)
     if presence_box is not None and pending_box is not None:
      _t=time.perf_counter()
      presence_im=ImageGrab.grab(bbox=presence_box)
      _perf_add("capture_relocation_presence",time.perf_counter()-_t)
-     if not overlay_test_written and overlay_test_image is None:
-      # Preserve the exact image used by the production presence prefilter.
-      overlay_test_image=presence_im.copy()
-
-     try:
-      while True:
-       _test_id,_test_state=_overlay_capture_test_states.get_nowait()
-       if _test_id==overlay_test_transition:
-        overlay_test_state=_test_state
-     except Empty:
-      pass
-     if overlay_test_image is not None and overlay_test_state is not None:
-      _save_overlay_capture_test(overlay_test_image,overlay_test_state)
-      overlay_test_written=True
-      overlay_test_image=None
-      overlay_test_state=None
-
      _t=time.perf_counter()
      pending_plausible=fast_locate_kt07_anchor(presence_im)
      _perf_add("relocation_pending_presence",time.perf_counter()-_t)
@@ -1467,13 +1323,21 @@ def worker():
       _perf_add("capture_relocation_pending",time.perf_counter()-_t)
 
       _t=time.perf_counter()
-      pending_validated=validate_client_anchor_probe(
+      pending_decoded,pending_diagnostic=inspect_client_anchor_probe(
        pending_im,
        (pending_box[0],pending_box[1]),
-       tracker,
        locate_kt07_anchor,
       )
       _perf_add("relocation_pending_validation",time.perf_counter()-_t)
+      # Validation may be expensive. Refresh native state before committing;
+      # a capture from an intermediate move/resize must never replace newer
+      # geometry.
+      if window_monitor.poll(time.monotonic(),force=True):
+       relocation_pending.enter(time.monotonic(),window_monitor.snapshot)
+      if pending_decoded is not None and relocation_pending.is_current(pending_attempt):
+       _text,_geometry,_anchor_box,_pitch=pending_decoded
+       pending_result=tracker.accept_validated_relocation(_text,_geometry)
+       pending_validated=(pending_result,_anchor_box,_pitch)
      relocation_pending.attempted(time.monotonic())
 
      if pending_validated is not None:
@@ -1499,6 +1363,17 @@ def worker():
        pending_im=ImageGrab.grab(bbox=pending_box)
       _save_relocation_diagnostic(
        pending_im,0,(pending_box[0],pending_box[1])
+      )
+      print(
+       "[KT07] Pending relocation attempt failed: "
+       f"old_client_rect={getattr(pending_snapshot,'client_rect',None)} "
+       f"new_client_rect={getattr(window_monitor.snapshot,'client_rect',None)} "
+       f"presence_box={presence_box} validation_box={pending_box} "
+       f"candidate_anchor_roi={pending_diagnostic.get('candidate_anchor_roi') if pending_plausible else None} "
+       f"candidate_anchor_absolute={pending_diagnostic.get('candidate_anchor_absolute') if pending_plausible else None} "
+       f"decoded_geometry={pending_diagnostic.get('decoded_geometry') if pending_plausible else None} "
+       f"failure_stage={pending_diagnostic.get('stage') if pending_plausible else 'presence_prefilter_failed'}",
+       flush=True,
       )
       relocation_diag_at=time.monotonic()
 
