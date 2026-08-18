@@ -5,7 +5,7 @@ recovery, and rare exhaustive recalibration. Screen capture stays in bridge.py.
 """
 from dataclasses import dataclass
 
-from Bridge.kt07_decoder import decode_at, decode_near_anchor, has_signal_at
+from Bridge.kt07_decoder import audit_initial_candidate, decode_at, decode_local_candidate, decode_near_anchor, has_signal_at
 
 
 @dataclass
@@ -34,6 +34,12 @@ class KT07GeometryTracker:
         # before it is allowed to replace an already trusted geometry.
         self.candidate_geometry = None
         self.candidate_hits = 0
+        self.candidate_seen_this_transport = False
+        self.initial_calibration_diagnostic = None
+        self.awaiting_visible_after_idle = False
+        self.transition_capture_index = None
+        self.transition_capture_limit = 10
+        self._last_transition_capture_index = self.transition_capture_limit
 
     @property
     def locked(self):
@@ -45,6 +51,11 @@ class KT07GeometryTracker:
         self.misses_since_lock = 0
         self.candidate_geometry = None
         self.candidate_hits = 0
+        self.candidate_seen_this_transport = False
+        self.initial_calibration_diagnostic = None
+        self.awaiting_visible_after_idle = False
+        self.transition_capture_index = None
+        self._last_transition_capture_index = self.transition_capture_limit
 
     def _accept(self, text, geometry, state):
         self.geometry = geometry
@@ -52,6 +63,7 @@ class KT07GeometryTracker:
         self.misses_since_lock = 0
         self.candidate_geometry = None
         self.candidate_hits = 0
+        self.candidate_seen_this_transport = False
         return DecodeResult(text, geometry, state)
 
     def accept_validated_relocation(self, text, geometry):
@@ -59,11 +71,13 @@ class KT07GeometryTracker:
         return self._accept(text, geometry, "relocated")
 
     def decode(self, image, anchor_box, anchor_pitch):
+        self.transition_capture_index = None
         # Fast path: a previously checksum-validated geometry.
         if self.geometry is not None:
             text = decode_at(image, self.geometry)
 
             if text is not None:
+                self._note_visible_capture()
                 return self._accept(
                     text,
                     self.geometry,
@@ -72,17 +86,27 @@ class KT07GeometryTracker:
 
             # A validated geometry remains useful while KT07 is idle.
             # No visible transport signal is not evidence of a geometry
-            # change, so keep the lock and reset recovery state.
+            # change. Keep the trusted lock. A local candidate may survive
+            # idle so it can be confirmed by a later transport frame, but
+            # repeated screenshots of one visible frame count only once.
             if not has_signal_at(image, self.geometry):
                 self.failures = 0
                 self.misses_since_lock = 0
-                self.candidate_geometry = None
-                self.candidate_hits = 0
+                self.candidate_seen_this_transport = False
+                self.awaiting_visible_after_idle = True
+                self._last_transition_capture_index = 0
                 return DecodeResult(
                     None,
                     self.geometry,
                     "idle",
                 )
+
+            self._note_visible_capture()
+            if (
+                self.transition_capture_index is not None
+                and self.transition_capture_index <= self.transition_capture_limit
+            ):
+                return DecodeResult(None, self.geometry, "settling")
 
             self.failures += 1
             self.misses_since_lock += 1
@@ -99,21 +123,22 @@ class KT07GeometryTracker:
                 )
 
             # Try bounded recalibration around the current anchor.
-            found = decode_near_anchor(
-                image,
-                anchor_box,
-                anchor_pitch,
-                exhaustive=False,
+            found, _local_attempts = decode_local_candidate(
+                image, self.geometry
             )
 
             if found is not None:
                 text, geometry = found
 
-                if geometry == self.candidate_geometry:
+                if (
+                    geometry == self.candidate_geometry
+                    and not self.candidate_seen_this_transport
+                ):
                     self.candidate_hits += 1
-                else:
+                elif geometry != self.candidate_geometry:
                     self.candidate_geometry = geometry
                     self.candidate_hits = 1
+                self.candidate_seen_this_transport = True
 
                 # While a fully validated replacement candidate is being
                 # confirmed, do not let ordinary failure escalation destroy
@@ -137,6 +162,7 @@ class KT07GeometryTracker:
             # Confirmation must be consecutive.
             self.candidate_geometry = None
             self.candidate_hits = 0
+            self.candidate_seen_this_transport = False
 
             # Keep the previous geometry for a few failures in case the
             # transport is temporarily incomplete.
@@ -152,6 +178,7 @@ class KT07GeometryTracker:
             self.geometry = None
             self.candidate_geometry = None
             self.candidate_hits = 0
+            self.candidate_seen_this_transport = False
 
             return DecodeResult(
                 None,
@@ -163,11 +190,26 @@ class KT07GeometryTracker:
         self.misses_since_lock += 1
 
         found = decode_near_anchor(
-            image,
-            anchor_box,
-            anchor_pitch,
-            exhaustive=False,
+            image, anchor_box, anchor_pitch, exhaustive=False
         )
+        self.initial_calibration_diagnostic = None
+        if found is not None and hasattr(image, "width"):
+            self.initial_calibration_diagnostic = audit_initial_candidate(
+                image, anchor_box, anchor_pitch, found
+            )
+            if self.initial_calibration_diagnostic["ambiguous"]:
+                found = None
+            else:
+                found = (
+                    self.initial_calibration_diagnostic["selected_text"],
+                    self.initial_calibration_diagnostic["selected_geometry"],
+                )
+
+        if (
+            self.initial_calibration_diagnostic is not None
+            and self.initial_calibration_diagnostic["ambiguous"]
+        ):
+            return DecodeResult(None, None, "calibration-ambiguous")
 
         if found is not None:
             text, geometry = found
@@ -210,6 +252,21 @@ class KT07GeometryTracker:
             "calibration-miss",
         )
 
+    def _note_visible_capture(self):
+        if self.awaiting_visible_after_idle:
+            self.awaiting_visible_after_idle = False
+            self.transition_capture_index = 1
+            self._last_transition_capture_index = 1
+            return
+        if (
+            self.transition_capture_index is None
+            and hasattr(self, "_last_transition_capture_index")
+            and self._last_transition_capture_index < self.transition_capture_limit
+        ):
+            self.transition_capture_index = self._last_transition_capture_index + 1
+        if self.transition_capture_index is not None:
+            self._last_transition_capture_index = self.transition_capture_index
+
 
 class KT07DuplicateSuppressor:
     """Suppress a frame while visible, but end suppression at real idle."""
@@ -217,11 +274,12 @@ class KT07DuplicateSuppressor:
     def __init__(self):
         self.last = None
 
-    def observe(self, raw, state, locked):
+    def observe(self, raw, state, locked, identity=None):
         if raw:
-            if raw == self.last:
+            key = raw if identity is None else identity
+            if key == self.last:
                 return None
-            self.last = raw
+            self.last = key
             return raw
         if state == "idle" or not locked:
             self.last = None

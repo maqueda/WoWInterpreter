@@ -3,8 +3,10 @@ from dataclasses import dataclass, replace
 import ctypes
 import ctypes.wintypes
 import math
+import threading
 import time
 from pathlib import Path
+import pprint
 
 from PIL import Image, ImageChops, ImageDraw
 
@@ -183,6 +185,13 @@ class RelocationPendingState:
         self.next_probe = now
         self.snapshot = snapshot
         self.generation += 1
+        return self.generation
+
+    def bind_snapshot(self, snapshot):
+        """Synchronize observer coordinates without declaring relocation."""
+        if snapshot != self.snapshot:
+            self.snapshot = snapshot
+            self.generation += 1
 
     def attempt(self):
         """Return the immutable window state identifying the next probe."""
@@ -204,12 +213,89 @@ class RelocationPendingState:
         self.pending = False
 
 
-def inspect_client_anchor_probe(image, screen_offset, anchor_locator):
-    """Decode a bounded probe without publishing its untrusted geometry."""
-    diagnostic = {
-        "stage": "anchor_not_found",
+class OverlayRelocationSuppression:
+    """Coordinate transport-capture overlay suppression across two threads.
+
+    Initial acquisition and native relocation share the same generation and
+    state.  The capture worker may probe only after the Tk thread has withdrawn
+    the overlay and acknowledged that exact generation.  Stale acknowledgements
+    and restores are deliberately ignored.
+    """
+
+    VISIBLE = "visible"
+    SUPPRESSION_REQUESTED = "suppression_requested"
+    SUPPRESSED = "suppressed"
+    RESTORE_REQUESTED = "restore_requested"
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._state = self.VISIBLE
+        self._generation = None
+
+    def request_suppression(self, generation):
+        with self._lock:
+            if self._generation is not None and generation < self._generation:
+                return False
+            if generation == self._generation and self._state in (
+                self.SUPPRESSION_REQUESTED, self.SUPPRESSED
+            ):
+                return False
+            self._generation = generation
+            self._state = self.SUPPRESSION_REQUESTED
+            return True
+
+    def acknowledge_suppressed(self, generation):
+        with self._lock:
+            if (
+                generation != self._generation
+                or self._state != self.SUPPRESSION_REQUESTED
+            ):
+                return False
+            self._state = self.SUPPRESSED
+            return True
+
+    def capture_allowed(self, generation):
+        with self._lock:
+            return generation == self._generation and self._state == self.SUPPRESSED
+
+    def request_restore(self, generation):
+        with self._lock:
+            if generation != self._generation or self._state not in (
+                self.SUPPRESSION_REQUESTED, self.SUPPRESSED
+            ):
+                return False
+            self._state = self.RESTORE_REQUESTED
+            return True
+
+    def acknowledge_restored(self, generation):
+        with self._lock:
+            if (
+                generation != self._generation
+                or self._state != self.RESTORE_REQUESTED
+            ):
+                return False
+            self._state = self.VISIBLE
+            self._generation = None
+            return True
+
+    def snapshot(self):
+        with self._lock:
+            return self._state, self._generation
+
+    def cleanup(self):
+        with self._lock:
+            was_suppressed = self._state != self.VISIBLE
+            self._state = self.VISIBLE
+            self._generation = None
+            return was_suppressed
+
+
+def empty_client_probe_diagnostic(stage="presence_prefilter_failed"):
+    return {
+        "stage": stage,
         "candidate_anchor_roi": None,
         "candidate_anchor_absolute": None,
+        "candidate_anchor_pitch": None,
         "decoded_geometry": None,
         "anchor_refinement_seconds": 0.0,
         "geometry_generation_seconds": 0.0,
@@ -218,6 +304,11 @@ def inspect_client_anchor_probe(image, screen_offset, anchor_locator):
         "decode_attempts": 0,
         "geometry_candidates": 0,
     }
+
+
+def inspect_client_anchor_probe(image, screen_offset, anchor_locator):
+    """Decode a bounded probe without publishing its untrusted geometry."""
+    diagnostic = empty_client_probe_diagnostic("anchor_not_found")
     total_started = time.perf_counter()
     anchor_started = time.perf_counter()
     found = anchor_locator(image)
@@ -226,6 +317,7 @@ def inspect_client_anchor_probe(image, screen_offset, anchor_locator):
         diagnostic["total_seconds"] = time.perf_counter() - total_started
         return None, diagnostic
     _ox, _oy, pitch, local_anchor_box = found
+    diagnostic["candidate_anchor_pitch"] = pitch
     diagnostic["candidate_anchor_roi"] = local_anchor_box
     diagnostic["candidate_anchor_absolute"] = offset_box(
         local_anchor_box, *screen_offset
@@ -430,6 +522,33 @@ def save_discovery_diagnostic(
         encoding="utf-8",
     )
     return full_path, reduced_path, closest_path, meta_path
+
+
+def preserve_validation_failure(
+    image, directory, generation, metadata, retain_generations=3
+):
+    """Preserve the first raw strict-failure ROI for one relocation generation."""
+    directory = Path(directory)
+    image_path = directory / f"kt07_relocation_failure_{generation}_validation.png"
+    report_path = directory / f"kt07_relocation_failure_{generation}.txt"
+    if image_path.exists() or report_path.exists():
+        return None
+    image.save(image_path)
+    report_path.write_text(
+        pprint.pformat(metadata, sort_dicts=False, width=140) + "\n",
+        encoding="utf-8",
+    )
+    generations = []
+    for path in directory.glob("kt07_relocation_failure_*_validation.png"):
+        value = path.name.removeprefix("kt07_relocation_failure_").removesuffix("_validation.png")
+        if value.isdigit():
+            generations.append(int(value))
+    for old_generation in sorted(set(generations))[:-retain_generations]:
+        for suffix in ("_validation.png", ".txt"):
+            old_path = directory / f"kt07_relocation_failure_{old_generation}{suffix}"
+            if old_path.exists():
+                old_path.unlink()
+    return image_path, report_path
 
 
 def analyze_discovery_failure(reduced):

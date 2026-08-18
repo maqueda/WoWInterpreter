@@ -2,6 +2,20 @@
 
 All notable WoWInterpreter changes are documented here.
 
+## [2.2.0] - 2026-08-18
+
+### Stable release
+- Introduced KT08 as the primary visual transport, with physical pilot-based geometry and independent horizontal/vertical pitch derivation.
+- Added CRC32 integrity, matching start/end sequence markers, strict UTF-8 validation and Lua double buffering for coherent frames.
+- Added robust initial acquisition in Fullscreen and client-relative Windowed modes.
+- Added automatic relocation after WoW moves, resizes or changes between Windowed and Fullscreen, including fractional physical rasterization.
+- Added generation-aware overlay suppression so protected captures occur only after the Tk UI thread acknowledges that the overlay is hidden.
+- Kept KT07 as a bounded legacy compatibility fallback with ambiguity rejection and fractional relocation support.
+- Preserved English/Simplified Chinese translation behavior and sequence-aware duplicate suppression.
+- Added real-raster regression fixtures and expanded protocol, acquisition, relocation, overlay and race-condition tests.
+- Removed obsolete successful-runtime screenshot diagnostics and clarified transport logging.
+- Updated runtime, addon, installer, build and documentation metadata for 2.2.0.
+
 ## [2.1.34] - 2026-08-13
 
 ### Stable release

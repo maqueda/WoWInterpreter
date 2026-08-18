@@ -4,7 +4,7 @@ This document is the technical guide for developers who want to understand, debu
 
 WoWInterpreter is a hybrid World of Warcraft Classic Era + Windows application. The in-game addon uses a visual transport to move UTF-8 chat payloads from WoW to a local Windows process. The Windows Bridge captures that transport, validates and decodes it, translates the message locally with NLLB, and displays the result in an overlay.
 
-This guide describes the architecture used by the 2.1.x line. When changing the protocol or runtime lifecycle, update this document together with the implementation.
+This guide describes the architecture used by the 2.2.x line. When changing the protocol or runtime lifecycle, update this document together with the implementation.
 
 ## 1. Architecture overview
 
@@ -14,7 +14,7 @@ World of Warcraft chat or /wi command
               v
 Addon/WoWInterpreter/WoWInterpreter.lua
               |
-              | KT07 visual transport
+              | KT08 visual transport
               v
 Desktop screen capture
               |
@@ -46,8 +46,8 @@ WoWInterpreterTray.py
 
 There are three main components:
 
-1. **WoW addon** - observes chat, provides `/wi`, keeps recent messages, and encodes requests into KT07.
-2. **Windows Bridge** - captures KT07, decodes payloads, runs translation, manages the overlay, and records diagnostics.
+1. **WoW addon** - observes chat, provides `/wi`, keeps recent messages, and encodes requests into KT08.
+2. **Windows Bridge** - captures KT08 first with a safe KT07 legacy fallback, decodes payloads, runs translation, manages the overlay, and records diagnostics.
 3. **Tray application** - provides the Windows lifecycle and launches/stops the Bridge.
 
 The installer packages the addon and the frozen Windows application together.
@@ -89,7 +89,7 @@ WoWInterpreter/
 
 **`Addon/WoWInterpreter/WoWInterpreter.lua`** contains the WoW-side protocol encoder, chat event handling, recent-message picker, `/wi` commands, translation modes, and ChatFrame geometry publication.
 
-**`Bridge/bridge.py`** contains KT07 capture and calibration, payload validation, translation, WoW terminology normalization, overlay behavior, CPU/performance diagnostics, and the Bridge event loop.
+**`Bridge/bridge.py`** contains KT08-first capture and calibration with KT07 fallback, payload validation, translation, WoW terminology normalization, overlay behavior, CPU/performance diagnostics, and the Bridge event loop.
 
 **`WoWInterpreterTray.py`** owns the Windows notification-area icon and Bridge child process. In a frozen build the same executable is launched with `--bridge`; in source mode Python launches the same entry point with `--bridge`.
 
@@ -189,15 +189,117 @@ It maintains recent messages in Lua. In manual mode this allows messages to be r
 
 The addon also publishes ChatFrame1 geometry periodically through a `META` payload.
 
-## 7. KT07 visual transport
+## 7. KT08 visual transport
 
-KT07 is the protocol between the sandboxed WoW addon and the Windows Bridge.
+KT08 is emitted by current addons. The Bridge recognizes KT08 first and keeps
+the safe KT07 decoder only as a migration fallback for older addon versions.
+A damaged frame identified by KT08 pilots is never reinterpreted as KT07.
+
+The production receive path is:
+
+```text
+WoW addon -> hidden KT08 buffer -> RGB/YCM presence hint
+          -> bounded screen capture -> four-pilot component detection
+          -> analytical X/Y geometry -> grayscale binary sampling
+          -> MAGIC/version/flags/length -> matching sequences -> CRC32
+          -> UTF-8 -> tracker/duplicate suppression -> Bridge/NLLB -> overlay
+```
+
+Presence is only a cheap reason to capture. Geometry and payload acceptance
+come from the four physical pilots and the complete strict binary frame.
+
+### Binary frame
+
+All multi-byte integers are unsigned big-endian:
+
+```text
+"KT08"[4] | VERSION[1] | FLAGS[1] | SEQUENCE_START[2] | LENGTH[2]
+PAYLOAD[LENGTH] | SEQUENCE_END[2] | CRC32[4]
+```
+
+Version is 1, flags must be zero, and payload length is 0..180 bytes. Sequence
+increments for every logical publication and wraps from 65535 to 0. Start and
+end sequence must match. CRC-32/IEEE uses reflected polynomial `0xEDB88320`,
+initial/final XOR `0xFFFFFFFF`, and covers every byte from MAGIC through
+SEQUENCE_END. UTF-8 validation occurs only after sequence and CRC validation.
+Frames are rejected for truncation or trailing bytes, wrong MAGIC, unsupported
+version/flags, excessive length, mismatched sequences, CRC mismatch or invalid
+UTF-8. Payload language and textual plausibility never participate in acceptance.
+
+### Physical synchronization
+
+The payload occupies 32x25 grayscale cells inside a 36x29 logical grid. Four
+fixed saturated 2x2-cell pilots sit at grid-center coordinates `(1,1)`,
+`(35,1)`, `(1,28)`, and `(35,28)` in red, green, blue, and yellow.
+One logical CELL of black separation sits between the RGB/YCM discovery strip
+and the pilot grid. This prevents the strip's red block and the TL red pilot
+from becoming one connected raster component.
+
+```text
+pitch_x = (TR.x - TL.x) / 34
+pitch_y = (BL.y - TL.y) / 27
+data_origin = TL_center + (pitch_x, pitch_y)
+```
+
+The bottom-right pilot independently checks both projections. Pilot centers
+are measured from rendered pixels, so alternating 3/4-pixel cell widths and
+different horizontal/vertical scaling do not require integer raster pitches.
+The RGB/YCM strip remains only a cheap presence hint; it never establishes
+data geometry or frame correctness.
+
+### Publication coherence
+
+The Lua producer owns two complete render buffers. For each publication it
+increments the 16-bit sequence, constructs the complete body and CRC, clears
+and writes every data cell in the hidden buffer, then hides the old buffer and
+shows the completed one. This prevents intentionally exposing a partially
+updated logical frame. Matching start/end sequences and CRC provide independent
+receiver-side coherence and integrity checks.
+
+### Initial acquisition and relocation
+
+Fullscreen acquisition uses the bounded top-left transport ROI. Windowed
+startup derives bounded presence and 420x350 probe rectangles from the current
+WoW client origin; normal acquisition does not scan the desktop with Python
+pixel loops.
+
+Initial Windowed acquisition and relocation share one generation-aware overlay
+suppression coordinator. The worker requests suppression and cannot call the
+protected `ImageGrab` path until Tk has withdrawn the overlay and acknowledged
+that exact generation. A decoded candidate remains side-effect-free until a
+forced native-state refresh proves that its client snapshot/generation is still
+current. Only then is absolute geometry committed. The hidden overlay is placed
+outside the new protected rectangle before restoration.
+
+The native observer detects client rectangle, display rectangle, style and DPI
+changes caused by moves, resizes and Windowed/Fullscreen transitions. Each
+change creates a newer relocation generation. Old captures cannot commit, old
+ACKs cannot authorize newer captures, and stale restore requests cannot expose
+the overlay. Temporary transport absence is expected during rendering and
+leaves relocation pending for the next bounded observation.
+
+Tk thread ownership is strict:
+
+- The worker monitors native state, manages generations, gates/captures images,
+  decodes, validates, commits trackers and publishes UI requests.
+- The Tk thread alone calls `withdraw()`, `deiconify()`, `geometry()`,
+  `update_idletasks()` and other widget APIs.
+
+### KT07 legacy fallback
+
+KT07 remains only for compatibility with older addon publications. Dispatch is
+deliberately asymmetric: a fully valid KT08 frame uses KT08; when no usable
+KT08 pilots/geometry identify KT08, the bounded KT07 fallback may be attempted;
+a positively identified but invalid KT08 frame is rejected and is never
+reinterpreted as KT07.
 
 It is **not OCR**. Text is encoded into a deterministic grid of grayscale symbols and decoded numerically from screen pixels.
 
 ### Why visual transport?
 
-WoW addons cannot simply open a local socket or execute the Python Bridge. KT07 provides a narrow one-way transport using UI pixels visible to both the game and the local capture process.
+WoW addons cannot simply open a local socket or execute the Python Bridge. The
+visual transport provides a narrow one-way channel through UI pixels visible to
+both the game and local capture process.
 
 ### Frame constants
 
@@ -261,9 +363,15 @@ Checksum:
 
 Frames with invalid length, unreadable symbols, checksum mismatch, or invalid UTF-8 must be rejected.
 
+KT07 recovery remains bounded and supports fractional pitch, but KT07 derives
+geometry through raster searches and uses only an additive 8-bit checksum. Its
+initial consensus rejects competing payload/geometries, yet it does not provide
+KT08-level integrity and remains a compatibility path.
+
 ### Visibility and queueing
 
-The addon displays a KT07 payload for approximately three seconds and serializes queued payloads so frames do not overwrite one another.
+Legacy KT07 producers display a payload for approximately three seconds and
+serialize queued payloads so frames do not overwrite one another.
 
 Changes to timing must leave the capture loop enough time to observe a complete stable frame.
 
@@ -284,14 +392,15 @@ Protocol metadata must never be translated as user text. For example, the Bridge
 
 ## 9. Capture and geometry
 
-KT07 is anchored near the top-left of the WoW UI. The Bridge protects that area from its own overlay.
+The visual transport is anchored near the top-left of the WoW client. The
+Bridge protects the validated KT08 or KT07 rectangle from its own overlay.
 
 The overlay can be moved and resized by the user, but it must not settle on top of the transport.
 
 When changing geometry logic:
 
 - preserve user freedom outside the protected area;
-- never let the overlay cover KT07;
+- never let the overlay cover the active transport;
 - account for WoW effective UI scale;
 - remember that WoW and Windows/Tk coordinate systems differ;
 - test multiple UI scales/resolutions when possible.
@@ -338,7 +447,7 @@ The translation UI is implemented with Tkinter.
 
 Two overlay invariants are especially important:
 
-1. it must remain clear of the KT07 transport region;
+1. it must remain clear of the active transport region;
 2. closing it must terminate the Bridge.
 
 Both must be regression-tested after overlay changes.
@@ -356,6 +465,8 @@ Useful diagnostic prefixes may include:
 ```text
 [BRIDGE]
 [CAPTURE]
+[TRANSPORT]
+[KT08]
 [KT07]
 [pixel]
 [CPU]
@@ -364,14 +475,24 @@ Useful diagnostic prefixes may include:
 [debug]
 ```
 
-Capture/calibration diagnostics can include:
+Failure-only transport diagnostics can include:
 
-```text
-debug_capture.png
-kt07_visible_capture.png
-kt07_visible_crop.png
-kt07_geometry.txt
-```
+- `debug_capture.png`: most recent throttled generic KT07 anchor failure;
+- `kt07_initial_ambiguity.png/.txt`: exact frame plus competing validated
+  candidates when KT07 initial consensus is ambiguous;
+- `kt07_relocation_failure.png`, `_reduced.png`, `_closest.png` and `.txt`:
+  overwritten bounded KT07 discovery evidence;
+- `kt07_relocation_failure_<generation>_validation.png/.txt`: first strict
+  KT07 validation failure for a generation, retaining the newest three;
+- `kt08_initial_failure_<counter>.png/.txt`: first immutable KT08 failure in
+  one visible initial-acquisition interval;
+- `kt08_relocation_failure_<generation>_validation.png/.txt`: first KT08
+  relocation failure for a generation, retaining the newest three.
+
+The PNG is the raw or bounded capture used by the decoder; its paired TXT
+contains geometry, candidate, validation and native-generation evidence. Normal
+successful messages do not write transport screenshots. When reporting a
+failure, collect `WoWInterpreter.log` and the matching PNG/TXT pair.
 
 Diagnostic screenshots can contain visible game content. Inspect and redact them before posting publicly.
 
@@ -382,22 +503,24 @@ Healthy NLLB initialization includes:
 [BRIDGE] NLLB ready.
 ```
 
-## 13. Debugging KT07
+## 13. Debugging the visual transport
 
 Debug transport failures in this order:
 
-1. **Does the KT07 grid appear in WoW?**
+1. **Does the KT08/KT07 grid appear in WoW?**
    - No: investigate addon/command/event handling.
    - Yes: continue with the Bridge.
 
 2. **Can the Bridge find the RGB/YCM anchor?**
    - Check UI scale, DPI, resolution, occlusion, and diagnostic captures.
 
-3. **Can symbol calibration find MAGIC?**
-   - If the anchor is found but MAGIC is not, investigate symbol origin/pitch and rendering interpolation.
+3. **Can KT08 find all four pilots and validate the binary frame?**
+   - Inspect component candidates, derived X/Y pitch, BR residual, sequences
+     and CRC. For an older KT07 frame, inspect MAGIC symbol calibration.
 
-4. **Are checksum failures persistent?**
-   - This usually indicates incorrect sampling geometry or frame timing.
+4. **Are CRC/checksum failures persistent?**
+   - KT08 CRC failures and KT07 checksum failures usually indicate incorrect
+     sampling geometry, occlusion or frame timing; do not weaken validation.
 
 5. **Is the correct record envelope decoded?**
    - Verify protocol parsing before debugging NLLB.
@@ -414,7 +537,7 @@ WoWInterpreter runs beside a game, so background resource usage matters.
 - Preserve the cheap idle detection path.
 - Avoid continuous expensive full-screen scanning.
 - Avoid busy loops.
-- Run expensive work only when KT07 is plausible.
+- Run expensive work only when the bounded transport presence hint is plausible.
 - Do not increase PyTorch thread counts casually.
 - Compare idle CPU behavior as well as active translation latency.
 - Review performance diagnostics after capture changes.
@@ -442,6 +565,12 @@ build_release.bat
 ```
 
 The release builder creates the PyInstaller application, stages runtime files, includes the addon, and invokes Inno Setup to produce the versioned installer.
+
+PyInstaller adds `Bridge/` and `assets/` to the frozen application. The release
+script explicitly verifies that `kt08_protocol.py`, `kt08_geometry.py`,
+`kt08_decoder.py` and `kt08_tracker.py` exist in the frozen Bridge tree before
+staging. Inno Setup packages that runtime, the addon and the two versioned user
+guides. Repository tests and `tests/fixtures` are not installer inputs.
 
 Packaging changes must be tested with a complete Windows release build.
 
@@ -505,6 +634,27 @@ installer version 2.1.35 -> tag v2.1.35
 
 ## 18. Testing checklist
 
+Run the complete automated suite from the repository root:
+
+```powershell
+python -m unittest discover -s tests -p "test_*.py"
+git diff --check
+```
+
+The suite covers KT08 framing, CRC, sequence wrap/mismatch, UTF-8, physical
+pilots, fractional/anisotropic rasterization, initial Fullscreen and Windowed
+acquisition, relocation, overlay ACK/generations, duplicate suppression and the
+KT07 fallback. Real PNGs in `tests/fixtures` preserve Windows raster behavior:
+
+- `kt07_relocation_failure_6_validation.png`: fractional Windowed KT07 pitch;
+- `kt07_initial_ambiguity.png/.txt`: competing Fullscreen KT07 geometries;
+- `kt08_initial_failure_1/2.png/.txt`: real KT08 acquisition with duplicate
+  anchor/pilot colors;
+- `kt08_initial_failure_3/4.png/.txt`: overlay-occluded KT08 captures that must
+  remain rejected.
+
+These are intentional regression assets, not disposable debug output.
+
 - [ ] Tray starts with translator stopped.
 - [ ] Start translator launches exactly one Bridge.
 - [ ] NLLB initializes successfully.
@@ -517,7 +667,7 @@ installer version 2.1.35 -> tag v2.1.35
 - [ ] Automatic incoming translation works.
 - [ ] Stop translator releases the Bridge/model process.
 - [ ] Closing the overlay returns the tray to Stopped.
-- [ ] Overlay cannot settle on top of KT07.
+- [ ] Overlay cannot settle on top of the active transport.
 - [ ] Idle CPU behavior is acceptable.
 - [ ] No obvious capture/performance regression exists.
 - [ ] Frozen PyInstaller build works.
@@ -535,7 +685,11 @@ The encoder and decoder are one protocol. Changes to MAGIC, frame layout, graysc
 
 ### Validate before translating
 
-Do not send a payload to NLLB unless frame length, checksum, and UTF-8 decoding are valid.
+KT08 payload acceptance is language-independent. Geometry comes from physical
+pilots, never payload plausibility. Do not send a KT08 payload to NLLB without
+mandatory MAGIC/version/flags/length, matching sequence, CRC32 and UTF-8
+validation. A positively identified invalid KT08 frame must not fall through to
+KT07.
 
 ### Do not translate protocol metadata
 
@@ -545,9 +699,18 @@ Record type and author fields are metadata, not user text.
 
 The tray can remain running while translation is stopped. Start creates the Bridge; Stop removes it. Closing the overlay also stops it.
 
-### Protect KT07
+### Protect capture and generations
 
-The application's own UI must not cover the pixels it needs to capture.
+Overlay suppression must be acknowledged before protected capture. Initial and
+relocation commits are bound to the exact native generation; stale generations
+cannot commit geometry or restore the overlay. Tk visibility and geometry calls
+remain UI-thread-only.
+
+### Preserve physical raster geometry
+
+Fractional and anisotropic physical pitches are normal. Do not quantize them to
+the addon's integer logical CELL, infer KT08 geometry from payload contents or
+replace the independent BR consistency check.
 
 ### Keep idle work cheap
 
@@ -560,6 +723,16 @@ WoW terminology normalization should remain source-conditioned.
 ### Test the frozen product
 
 Source execution alone is insufficient for packaging/runtime changes.
+
+### Why KT08 replaced KT07
+
+KT07 used raster-search geometry and an additive 8-bit checksum. Real Windows
+testing exposed checksum-colliding corrupted payloads, ambiguous valid-looking
+geometries, fractional rasterization, incorrect anchor-to-data pitch
+assumptions, overlay occlusion and relocation races. KT08 addresses those
+classes with physical pilots, analytical independent X/Y geometry, CRC32,
+duplicated sequence markers, double buffering, generation-bound relocation and
+ACK-gated overlay suppression. KT07 remains only for compatibility.
 
 ## 20. Contribution workflow
 
@@ -594,7 +767,7 @@ A pull request should explain:
 
 Avoid unrelated refactors in focused bug/protocol changes.
 
-## 21. Adding a KT07 record type
+## 21. Adding an application record type
 
 1. Define semantics and fields.
 2. Keep the complete UTF-8 envelope within `MAX_BYTES`.

@@ -19,6 +19,14 @@ C:/WI21/
 # Logs/debug captures
 *.log
 debug_capture.png
+Bridge/kt07_initial_ambiguity.png
+Bridge/kt07_initial_ambiguity.txt
+Bridge/kt07_relocation_*.png
+Bridge/kt07_relocation_*.txt
+Bridge/kt08_initial_failure_*.png
+Bridge/kt08_initial_failure_*.txt
+Bridge/kt08_relocation_failure_*.png
+Bridge/kt08_relocation_failure_*.txt
 
 # IDE/OS
 .vscode/

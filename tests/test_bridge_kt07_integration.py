@@ -483,20 +483,13 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
         )
 
     def test_worker_publishes_validated_geometry_to_overlay(self):
-        occurrences = self.worker_source.count(
-            '"kt07_geometry"'
-        )
-
-        # Every path that establishes newly validated screen-space geometry
-        # must publish it to the overlay:
-        # 1. initial/exhaustive calibration;
-        # 2. local recalibration;
-        # 3. validated global relocation after a mode/resolution change.
-        self.assertEqual(5, occurrences)
-
         self.assertIn(
-            "_protected_rect_for_geometry",
+            "def _publish_validated_geometry",
             self.worker_source,
+        )
+        self.assertGreaterEqual(
+            self.worker_source.count("_publish_validated_geometry("),
+            5,
         )
 
     def test_local_recalibration_updates_overlay_protection(self):
@@ -511,12 +504,7 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
         ]
 
         self.assertIn(
-            '"kt07_geometry"',
-            block,
-        )
-
-        self.assertIn(
-            "_protected_rect_for_geometry",
+            "_publish_validated_geometry(result.geometry)",
             block,
         )
 
@@ -532,12 +520,7 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
         ]
 
         self.assertIn(
-            '"kt07_geometry"',
-            block,
-        )
-
-        self.assertIn(
-            "_protected_rect_for_geometry",
+            "_publish_validated_geometry(result.geometry)",
             block,
         )
 
@@ -656,13 +639,78 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
         self.assertIn("relocation_pending.observation_due", self.worker_source)
         self.assertIn("ImageGrab.grab(bbox=presence_box)", self.worker_source)
 
+    def test_native_relocation_requests_overlay_suppression(self):
+        marker = "if window_monitor.poll(_now):"
+        block = self.worker_source[self.worker_source.index(marker):][:500]
+        self.assertIn("_enter_native_relocation", block)
+        self.assertIn('"kt07_overlay_suppress"', self.worker_source)
+
+    def test_pending_capture_is_gated_by_matching_ui_acknowledgement(self):
+        marker = 'and result.state=="idle"'
+        block = self.worker_source[self.worker_source.index(marker):][:650]
+        gate = block.index("overlay_relocation_suppression.capture_allowed")
+        capture = self.worker_source.index(
+            "ImageGrab.grab(bbox=presence_box)",
+            self.worker_source.index(marker),
+        )
+        self.assertGreater(capture, self.worker_source.index(marker) + gate)
+
+    def test_ordinary_presence_observer_does_not_request_suppression(self):
+        marker = "relocation_pending.observation_due"
+        block = self.worker_source[self.worker_source.index(marker):][:1000]
+        self.assertNotIn("request_suppression", block)
+        self.assertNotIn('"kt07_overlay_suppress"', block)
+
+    def test_tk_visibility_operations_are_confined_to_ui_helpers(self):
+        worker_tree = ast.parse(self.worker_source)
+        worker_attributes = {
+            node.attr
+            for node in ast.walk(worker_tree)
+            if isinstance(node, ast.Attribute)
+        }
+        self.assertNotIn("withdraw", worker_attributes)
+        self.assertNotIn("deiconify", worker_attributes)
+        suppress = next(
+            node for node in self.tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "_suppress_overlay_for_relocation"
+        )
+        restore = next(
+            node for node in self.tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "_restore_overlay_after_relocation"
+        )
+        self.assertIn("rootui.withdraw()", ast.get_source_segment(self.source, suppress))
+        self.assertIn("rootui.deiconify()", ast.get_source_segment(self.source, restore))
+
+    def test_relocation_restore_positions_while_hidden_then_shows(self):
+        helper = next(
+            node for node in self.tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "_restore_overlay_after_relocation"
+        )
+        source = ast.get_source_segment(self.source, helper)
+        self.assertLess(
+            source.index("_apply_kt07_protected_rect"),
+            source.index("rootui.deiconify()"),
+        )
+
+    def test_shutdown_cleans_overlay_suppression_state(self):
+        helper = next(
+            node for node in self.tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "close_overlay"
+        )
+        source = ast.get_source_segment(self.source, helper)
+        self.assertIn("overlay_relocation_suppression.cleanup()", source)
+        self.assertIn("rootui.deiconify()", source)
+
     def test_pending_relocation_emits_same_validated_frame(self):
         marker = "pending_decoded,pending_diagnostic=inspect_client_anchor_probe"
         position = self.worker_source.find(marker)
         self.assertNotEqual(-1, position)
-        block = self.worker_source[position:position + 1800]
+        block = self.worker_source[position:position + 10000]
         self.assertIn("raw=pending_result.text", block)
-        self.assertIn('"kt07_geometry"', block)
+        self.assertIn("_publish_validated_geometry(", block)
 
     def test_pending_validation_is_snapshot_bound_and_commits_after_refresh(self):
         marker = "pending_attempt=relocation_pending.attempt()"
@@ -678,12 +726,77 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
         marker = "pending_attempt=relocation_pending.attempt()"
         prefix = self.worker_source[max(0, self.worker_source.index(marker) - 180):self.worker_source.index(marker)]
         self.assertIn(
-            "relocation_pending.snapshot != window_monitor.snapshot",
+            "relocation_pending.bind_snapshot(window_monitor.snapshot)",
             prefix,
         )
 
+    def test_stationary_startup_binding_does_not_enter_pending(self):
+        marker = "relocation_pending.bind_snapshot(window_monitor.snapshot)"
+        position = self.worker_source.index(marker)
+        self.assertNotIn(
+            "relocation_pending.enter",
+            self.worker_source[position:position + len(marker)],
+        )
+
+    def test_pending_diagnostic_is_initialized_before_presence_branch(self):
+        initialized = self.worker_source.index(
+            "pending_diagnostic=empty_client_probe_diagnostic()"
+        )
+        branch = self.worker_source.index("if pending_plausible:", initialized)
+        self.assertLess(initialized, branch)
+
+    def test_initial_and_relocation_anchor_locators_are_separate(self):
+        self.assertIn("result=tracker.decode", self.worker_source)
+        pending_marker = "pending_decoded,pending_diagnostic=inspect_client_anchor_probe"
+        pending_block = self.worker_source[self.worker_source.index(pending_marker):]
+        self.assertIn("locate_client_anchor", pending_block[:400])
+
+    def test_successful_payloads_do_not_write_obsolete_runtime_diagnostics(self):
+        for obsolete in (
+            "_save_locked_payload_transition",
+            "kt07_locked_payload_change.png",
+            "kt07_locked_payload_change.txt",
+            "_save_idle_visible_capture",
+            "kt07_idle_visible_transition.txt",
+        ):
+            self.assertNotIn(obsolete, self.source)
+        self.assertIn("emit_raw=duplicates.observe", self.worker_source)
+
+    def test_shared_runtime_logs_use_transport_terminology(self):
+        for obsolete in (
+            "[OVERLAY] KT07 protected area updated",
+            "[OVERLAY] KT07 moved under overlay",
+            "[OVERLAY] KT07 area protected",
+            "[KT07] WoW window/display geometry changed",
+        ):
+            self.assertNotIn(obsolete, self.source)
+        self.assertIn("[TRANSPORT] WoW window/display geometry changed", self.source)
+        self.assertIn("[OVERLAY] Transport protected area updated", self.source)
+
+    def test_transient_presence_absence_is_status_not_validation_failure(self):
+        marker = "if not pending_plausible:"
+        block = self.worker_source[self.worker_source.index(marker):][:500]
+        absence_branch = block[:block.index("else:")]
+        self.assertIn("Relocation transport not visible yet", absence_branch)
+        self.assertNotIn("_save_relocation_diagnostic", absence_branch)
+        self.assertNotIn("request_restore", absence_branch)
+
+    def test_genuine_kt07_failure_diagnostics_retain_protocol_label(self):
+        self.assertIn("[KT07] Relocation diagnostic updated", self.source)
+        self.assertIn("[KT07] Initial calibration consensus diagnostic", self.source)
+        self.assertIn("[KT07] Preserved first strict relocation failure", self.source)
+
     def test_temporary_overlay_contamination_diagnostic_is_removed(self):
         self.assertNotIn("kt07_overlay_capture_test", self.source)
+
+    def test_first_strict_relocation_failure_preserves_raw_roi_and_overlay_metadata(self):
+        self.assertIn("preserve_validation_failure", self.worker_source)
+        self.assertIn('pending_diagnostic["stage"]=="strict_frame_validation_failed"', self.worker_source)
+        self.assertIn('"kt07_relocation_overlay_diagnostic"', self.worker_source)
+        self.assertIn("_append_relocation_overlay_metadata", self.source)
+        self.assertIn('"overlay_intersects_validation_roi"', self.source)
+        self.assertIn('"overlay_intersects_anchor_estimate"', self.source)
+        self.assertIn('"include_layered_windows_effective_default":False', self.source)
 
     def test_global_locator_has_no_desktop_pixel_loops(self):
         helper = next(
@@ -706,12 +819,7 @@ class BridgeKT07IntegrationTests(unittest.TestCase):
         ]
 
         self.assertIn(
-            '"kt07_geometry"',
-            block,
-        )
-
-        self.assertIn(
-            "_protected_rect_for_geometry",
+            "_publish_validated_geometry(result.geometry)",
             block,
         )
 

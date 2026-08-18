@@ -1,13 +1,15 @@
 import time
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from PIL import Image, ImageDraw
 
-from Bridge.kt07_decoder import Geometry
+from Bridge.kt07_decoder import Geometry, decode_at, relocation_candidate_pitches
 from Bridge.kt07_relocation import (
     ANCHOR_COLORS,
+    OverlayRelocationSuppression,
     RelocationProbeBackoff,
     RelocationPendingState,
     WoWWindowChangeMonitor,
@@ -20,6 +22,7 @@ from Bridge.kt07_relocation import (
     locate_client_anchor,
     offset_box,
     offset_geometry,
+    preserve_validation_failure,
     save_discovery_diagnostic,
     validate_client_anchor_probe,
     validate_candidate_rois,
@@ -28,6 +31,120 @@ from Bridge.kt07_tracker import KT07GeometryTracker
 
 
 class KT07RelocationTests(unittest.TestCase):
+
+    def test_real_generation_6_fixture_uses_fractional_data_pitch(self):
+        fixture = Path(__file__).parent / "fixtures" / "kt07_relocation_failure_6_validation.png"
+        image = Image.open(fixture).convert("RGB")
+        found = locate_client_anchor(image)
+        self.assertEqual((5.25, 9.25, 3.5, (4, 0, 46, 8)), found)
+        self.assertNotIn(3.875, tuple(x / 4 for x in range(11, 18)))
+        self.assertIn(3.875, relocation_candidate_pitches(found[2]))
+        self.assertIsNone(decode_at(image, Geometry(3.75, 12.0, 4.5, 4.5)))
+        self.assertEqual(
+            "OUT\tYou\tI have one sister",
+            decode_at(image, Geometry(3.75, 12.0, 3.875, 3.875)),
+        )
+
+        started = time.perf_counter()
+        decoded, diagnostic = inspect_client_anchor_probe(
+            image, (90, 437), locate_client_anchor
+        )
+        elapsed = time.perf_counter() - started
+
+        self.assertIsNotNone(decoded)
+        self.assertEqual("OUT\tYou\tI have one sister", decoded[0])
+        self.assertEqual(Geometry(92.75, 447.5, 3.875, 3.875), decoded[1])
+        self.assertEqual(3.875, decoded[1].pitch_x)
+        self.assertEqual(3.875, decoded[1].pitch_y)
+        self.assertEqual("validated", diagnostic["stage"])
+        self.assertEqual(24_375, diagnostic["geometry_candidates"])
+        self.assertLess(diagnostic["decode_attempts"], 24_375)
+        self.assertLess(elapsed, 0.5)
+
+    def test_overlay_suppression_requires_matching_ui_ack_before_capture(self):
+        suppression = OverlayRelocationSuppression()
+        self.assertTrue(suppression.request_suppression(1))
+        self.assertFalse(suppression.capture_allowed(1))
+        self.assertFalse(suppression.acknowledge_suppressed(0))
+        self.assertTrue(suppression.acknowledge_suppressed(1))
+        self.assertTrue(suppression.capture_allowed(1))
+
+    def test_new_native_generation_invalidates_old_ack_and_restore(self):
+        suppression = OverlayRelocationSuppression()
+        suppression.request_suppression(1)
+        suppression.acknowledge_suppressed(1)
+        self.assertTrue(suppression.request_suppression(2))
+        self.assertFalse(suppression.capture_allowed(1))
+        self.assertFalse(suppression.capture_allowed(2))
+        self.assertFalse(suppression.request_restore(1))
+        self.assertFalse(suppression.acknowledge_suppressed(1))
+        self.assertTrue(suppression.acknowledge_suppressed(2))
+        self.assertTrue(suppression.capture_allowed(2))
+
+    def test_failed_and_idle_relocation_remain_suppressed(self):
+        suppression = OverlayRelocationSuppression()
+        suppression.request_suppression(4)
+        suppression.acknowledge_suppressed(4)
+        for _observer_cycle in range(100):
+            self.assertTrue(suppression.capture_allowed(4))
+            self.assertEqual(("suppressed", 4), suppression.snapshot())
+
+    def test_strict_validation_failure_does_not_restore_overlay(self):
+        suppression = OverlayRelocationSuppression()
+        suppression.request_suppression(5)
+        suppression.acknowledge_suppressed(5)
+        # A failed decoder produces no state transition.
+        self.assertEqual(("suppressed", 5), suppression.snapshot())
+        self.assertTrue(suppression.capture_allowed(5))
+
+    def test_stationary_fullscreen_never_requests_suppression(self):
+        snapshot = self._snapshot((0, 0, 2560, 1440), style=1)
+        monitor = WoWWindowChangeMonitor(lambda: snapshot, interval=0)
+        suppression = OverlayRelocationSuppression()
+        self.assertFalse(monitor.poll(0))
+        self.assertFalse(monitor.poll(1))
+        self.assertEqual(("visible", None), suppression.snapshot())
+
+    def test_stationary_windowed_never_requests_suppression(self):
+        snapshot = self._snapshot((320, 167, 2240, 1247), style=2)
+        monitor = WoWWindowChangeMonitor(lambda: snapshot, interval=0)
+        suppression = OverlayRelocationSuppression()
+        self.assertFalse(monitor.poll(0))
+        self.assertFalse(monitor.poll(1))
+        self.assertEqual(("visible", None), suppression.snapshot())
+
+    def test_normal_presence_observation_does_not_suppress_overlay(self):
+        pending = RelocationPendingState(interval=0.5)
+        pending.bind_snapshot(self._snapshot())
+        suppression = OverlayRelocationSuppression()
+        self.assertTrue(pending.observation_due(0, True))
+        self.assertFalse(pending.pending)
+        self.assertEqual(("visible", None), suppression.snapshot())
+
+    def test_success_restores_only_current_generation(self):
+        suppression = OverlayRelocationSuppression()
+        suppression.request_suppression(7)
+        suppression.acknowledge_suppressed(7)
+        self.assertTrue(suppression.request_restore(7))
+        self.assertFalse(suppression.capture_allowed(7))
+        self.assertFalse(suppression.acknowledge_restored(6))
+        self.assertEqual(("restore_requested", 7), suppression.snapshot())
+        self.assertTrue(suppression.acknowledge_restored(7))
+        self.assertEqual(("visible", None), suppression.snapshot())
+
+    def test_repeated_suppression_request_is_idempotent(self):
+        suppression = OverlayRelocationSuppression()
+        self.assertTrue(suppression.request_suppression(3))
+        self.assertFalse(suppression.request_suppression(3))
+        suppression.acknowledge_suppressed(3)
+        self.assertFalse(suppression.request_suppression(3))
+
+    def test_cleanup_returns_state_to_visible(self):
+        suppression = OverlayRelocationSuppression()
+        suppression.request_suppression(9)
+        suppression.acknowledge_suppressed(9)
+        self.assertTrue(suppression.cleanup())
+        self.assertEqual(("visible", None), suppression.snapshot())
 
     @staticmethod
     def _snapshot(rect=(0, 0, 1920, 1080), style=1, dpi=96):
@@ -39,6 +156,20 @@ class KT07RelocationTests(unittest.TestCase):
         pending = RelocationPendingState()
         self.assertFalse(monitor.poll(0))
         self.assertFalse(monitor.poll(1))
+        self.assertFalse(pending.pending)
+
+    def test_startup_snapshot_binding_does_not_enter_relocation(self):
+        snapshot = self._snapshot()
+        monitor = WoWWindowChangeMonitor(lambda: snapshot, interval=0)
+        pending = RelocationPendingState()
+
+        self.assertFalse(monitor.poll(0))
+        pending.bind_snapshot(monitor.snapshot)
+
+        self.assertEqual(snapshot, pending.snapshot)
+        self.assertFalse(pending.pending)
+        self.assertFalse(monitor.poll(1))
+        pending.bind_snapshot(monitor.snapshot)
         self.assertFalse(pending.pending)
 
     def test_move_resize_mode_dpi_and_display_changes_are_detected(self):
@@ -233,6 +364,34 @@ class KT07RelocationTests(unittest.TestCase):
             self.assertIn("candidate_count=0", metadata)
             self.assertIn("closest_match_count=", metadata)
             self.assertIn("closest_sample_rgb=", metadata)
+
+    def test_first_strict_failure_per_generation_is_preserved_raw(self):
+        first = Image.new("RGB", (420, 350), (11, 22, 33))
+        later = Image.new("RGB", (420, 350), (200, 100, 50))
+        with tempfile.TemporaryDirectory() as directory:
+            saved = preserve_validation_failure(
+                first, directory, 7, {"failure_stage": "strict_frame_validation_failed"}
+            )
+            self.assertIsNotNone(saved)
+            self.assertIsNone(preserve_validation_failure(
+                later, directory, 7, {"failure_stage": "presence_prefilter_failed"}
+            ))
+            preserved = Image.open(saved[0])
+            self.assertEqual((420, 350), preserved.size)
+            self.assertEqual((11, 22, 33), preserved.getpixel((200, 200)))
+
+    def test_validation_failure_retention_keeps_latest_three_generations(self):
+        image = Image.new("RGB", (20, 20), (1, 2, 3))
+        with tempfile.TemporaryDirectory() as directory:
+            for generation in range(1, 6):
+                preserve_validation_failure(image, directory, generation, {})
+            names = {path.name for path in Path(directory).iterdir()}
+            self.assertFalse(any("_1" in name or "_2" in name for name in names))
+            for generation in (3, 4, 5):
+                self.assertIn(
+                    f"kt07_relocation_failure_{generation}_validation.png", names
+                )
+                self.assertIn(f"kt07_relocation_failure_{generation}.txt", names)
 
     def test_diagnostic_reports_closest_layout_and_color_results(self):
         image = self._anchor_image(9, 323, 170).resize((225, 150))

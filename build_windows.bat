@@ -1,10 +1,12 @@
 @echo off
 setlocal
 cd /d %~dp0
-echo Building WoWInterpreter v2.1...
-py -m pip install --upgrade pip
-py -m pip install -r requirements-runtime.txt pyinstaller
-py -m PyInstaller --noconfirm --clean --windowed --onedir ^
+echo Building WoWInterpreter v2.2.0...
+python -m pip install --upgrade pip
+if errorlevel 1 exit /b 1
+python -m pip install -r requirements-runtime.txt pyinstaller
+if errorlevel 1 exit /b 1
+python -m PyInstaller --noconfirm --clean --windowed --onedir ^
  --name WoWInterpreter ^
  --icon "assets\WoWInterpreter.ico" ^
  --collect-all PIL ^
@@ -27,6 +29,8 @@ py -m PyInstaller --noconfirm --clean --windowed --onedir ^
  --add-data "Bridge;Bridge" ^
  --add-data "assets;assets" ^
  WoWInterpreterTray.py
+if errorlevel 1 exit /b 1
+if not exist "dist\WoWInterpreter\WoWInterpreter.exe" exit /b 1
 echo.
 echo Build complete: dist\WoWInterpreter\WoWInterpreter.exe
 echo Next: compile installer.iss with Inno Setup if you want Setup.exe.

@@ -1,8 +1,9 @@
 import unittest
 from unittest.mock import patch
+from PIL import Image
 
 from Bridge.kt07_decoder import Geometry
-from Bridge.kt07_tracker import KT07GeometryTracker
+from Bridge.kt07_tracker import KT07DuplicateSuppressor, KT07GeometryTracker
 
 
 G1 = Geometry(7.0, 10.0, 3.0, 3.0)
@@ -10,6 +11,50 @@ G2 = Geometry(7.25, 10.0, 3.0, 3.0)
 
 
 class KT07GeometryTrackerTests(unittest.TestCase):
+    def test_consensus_selection_overrides_corrupt_first_candidate_and_emits_once(self):
+        tracker = KT07GeometryTracker()
+        gate = KT07DuplicateSuppressor()
+        correct_geometry = Geometry(7.5, 16.75, 5.875, 5.75)
+        diagnostic = {
+            "ambiguous": False,
+            "selected_text": "OUT\tYou\tTesting the first translation",
+            "selected_geometry": correct_geometry,
+            "unique_payload_count": 2,
+        }
+        with patch(
+            "Bridge.kt07_tracker.decode_near_anchor",
+            return_value=("OUT\tYou\tTUU\x14Ynf corrupt", G1),
+        ), patch(
+            "Bridge.kt07_tracker.audit_initial_candidate", return_value=diagnostic
+        ):
+            result = tracker.decode(
+                Image.new("RGB", (200, 200)), (6, 1, 78, 13), 6.0
+            )
+        self.assertEqual("calibrated", result.state)
+        self.assertEqual(correct_geometry, tracker.geometry)
+        self.assertEqual(diagnostic["selected_text"], gate.observe(result.text, result.state, True))
+        self.assertIsNone(gate.observe(result.text, "fast", True))
+    def test_initial_lock_rejects_ambiguous_structurally_valid_payloads(self):
+        tracker = KT07GeometryTracker()
+        diagnostic = {
+            "ambiguous": True,
+            "candidates": [
+                {"geometry": G1, "text": "wrong"},
+                {"geometry": G2, "text": "arbitrary 二进制 UTF-8"},
+            ],
+        }
+        with patch(
+            "Bridge.kt07_tracker.decode_near_anchor", return_value=("wrong", G1)
+        ), patch(
+            "Bridge.kt07_tracker.audit_initial_candidate", return_value=diagnostic
+        ):
+            result = tracker.decode(
+                Image.new("RGB", (100, 100)), (7, 1, 43, 7), 3.0
+            )
+
+        self.assertEqual("calibration-ambiguous", result.state)
+        self.assertFalse(tracker.locked)
+        self.assertIs(tracker.initial_calibration_diagnostic, diagnostic)
 
     def test_initial_lock_requires_validated_calibration(self):
         tracker = KT07GeometryTracker()
@@ -97,8 +142,8 @@ class KT07GeometryTrackerTests(unittest.TestCase):
             "Bridge.kt07_tracker.has_signal_at",
             return_value=True,
         ), patch(
-            "Bridge.kt07_tracker.decode_near_anchor",
-            return_value=("moved", G2),
+            "Bridge.kt07_tracker.decode_local_candidate",
+            return_value=(("moved", G2), 1),
         ) as calibrate:
 
             result = tracker.decode(
@@ -117,11 +162,9 @@ class KT07GeometryTrackerTests(unittest.TestCase):
         self.assertEqual(G2, tracker.candidate_geometry)
         self.assertEqual(1, tracker.candidate_hits)
 
-        self.assertFalse(
-            calibrate.call_args.kwargs["exhaustive"]
-        )
+        calibrate.assert_called_once()
 
-    def test_repeated_local_candidate_replaces_geometry(self):
+    def test_repeated_screenshots_of_one_frame_do_not_replace_geometry(self):
         tracker = KT07GeometryTracker(
             local_after=2,
             unlock_after=5,
@@ -138,8 +181,8 @@ class KT07GeometryTrackerTests(unittest.TestCase):
             "Bridge.kt07_tracker.has_signal_at",
             return_value=True,
         ), patch(
-            "Bridge.kt07_tracker.decode_near_anchor",
-            return_value=("moved", G2),
+            "Bridge.kt07_tracker.decode_local_candidate",
+            return_value=(("moved", G2), 1),
         ):
             first = tracker.decode(
                 object(),
@@ -154,15 +197,37 @@ class KT07GeometryTrackerTests(unittest.TestCase):
             )
 
         self.assertEqual("local-candidate", first.state)
-        self.assertEqual(
-            "local-recalibrated",
-            second.state,
-        )
+        self.assertEqual("local-candidate", second.state)
+        self.assertIsNone(second.text)
+        self.assertEqual(G1, tracker.geometry)
+        self.assertEqual(G2, tracker.candidate_geometry)
+        self.assertEqual(1, tracker.candidate_hits)
+
+    def test_local_candidate_recalibrates_across_distinct_transport_frames(self):
+        tracker = KT07GeometryTracker(local_after=2, unlock_after=5, exhaustive_after=9)
+        tracker.geometry = G1
+        tracker.failures = 1
+
+        with patch("Bridge.kt07_tracker.decode_at", return_value=None), patch(
+            "Bridge.kt07_tracker.has_signal_at",
+            side_effect=[True, False] + [True] * 11,
+        ), patch(
+            "Bridge.kt07_tracker.decode_local_candidate", return_value=(("moved", G2), 1)
+        ):
+            first = tracker.decode(object(), (7, 1, 43, 7), 3.0)
+            idle = tracker.decode(object(), (7, 1, 43, 7), 3.0)
+            settling = [
+                tracker.decode(object(), (7, 1, 43, 7), 3.0)
+                for _ in range(10)
+            ]
+            second = tracker.decode(object(), (7, 1, 43, 7), 3.0)
+
+        self.assertEqual("local-candidate", first.state)
+        self.assertEqual("idle", idle.state)
+        self.assertEqual({"settling"}, {result.state for result in settling})
+        self.assertEqual("local-recalibrated", second.state)
         self.assertEqual("moved", second.text)
         self.assertEqual(G2, tracker.geometry)
-        self.assertEqual(0, tracker.failures)
-        self.assertIsNone(tracker.candidate_geometry)
-        self.assertEqual(0, tracker.candidate_hits)
 
     def test_different_local_candidate_restarts_confirmation(self):
         tracker = KT07GeometryTracker(
@@ -183,10 +248,10 @@ class KT07GeometryTrackerTests(unittest.TestCase):
             "Bridge.kt07_tracker.has_signal_at",
             return_value=True,
         ), patch(
-            "Bridge.kt07_tracker.decode_near_anchor",
+            "Bridge.kt07_tracker.decode_local_candidate",
             side_effect=[
-                ("first", G2),
-                ("second", g3),
+                (("first", G2), 1),
+                (("second", g3), 1),
             ],
         ):
             tracker.decode(
@@ -245,8 +310,8 @@ class KT07GeometryTrackerTests(unittest.TestCase):
             "Bridge.kt07_tracker.has_signal_at",
             return_value=True,
         ), patch(
-            "Bridge.kt07_tracker.decode_near_anchor",
-            return_value=None,
+            "Bridge.kt07_tracker.decode_local_candidate",
+            return_value=(None, 625),
         ):
 
             result = tracker.decode(

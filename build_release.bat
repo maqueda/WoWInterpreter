@@ -5,7 +5,7 @@ cd /d "%~dp0"
 set "STAGEROOT=C:\WI21\stage"
 
 echo ============================================================
-echo  WoWInterpreter 2.1.34 - Release Builder
+echo  WoWInterpreter 2.2.0 - Release Builder
 echo ============================================================
 echo.
 
@@ -13,6 +13,12 @@ echo [1/6] Building self-contained application...
 call build_windows.bat
 if errorlevel 1 goto :fail
 if not exist "dist\WoWInterpreter\WoWInterpreter.exe" goto :fail
+for %%M in (kt08_protocol.py kt08_geometry.py kt08_decoder.py kt08_tracker.py) do (
+  if not exist "dist\WoWInterpreter\_internal\Bridge\%%M" (
+    echo ERROR: Frozen runtime missing Bridge\%%M.
+    goto :fail
+  )
+)
 
 echo.
 echo [2/6] Pruning development/metadata trees from frozen runtime...
@@ -68,11 +74,11 @@ echo.
 echo [5/6] Looking for Inno Setup 6...
 
 REM Validate installer documentation inputs before compiling Inno Setup.
-if not exist "Documentation\WoWInterpreter-2.1.34-User-Guide-English.docx" (
+if not exist "Documentation\WoWInterpreter-2.2.0-User-Guide-English.docx" (
   echo ERROR: Missing English user guide required by installer.
   exit /b 1
 )
-if not exist "Documentation\WoWInterpreter-2.1.34-User-Guide-Chinese-Simplified.docx" (
+if not exist "Documentation\WoWInterpreter-2.2.0-User-Guide-Chinese-Simplified.docx" (
   echo ERROR: Missing Simplified Chinese user guide required by installer.
   exit /b 1
 )
@@ -94,7 +100,7 @@ mkdir "installer"
 "%ISCC%" /DStageRoot="%STAGEROOT%" "installer.iss"
 if errorlevel 1 goto :inno_fail
 
-if not exist "installer\WoWInterpreter-2.1.34-Setup.exe" (
+if not exist "installer\WoWInterpreter-2.2.0-Setup.exe" (
   echo ERROR: Setup.exe not found after compilation.
   goto :fail
 )
@@ -107,8 +113,8 @@ echo.
 echo ============================================================
 echo  RELEASE COMPLETE
 echo ============================================================
-echo "%CD%\installer\WoWInterpreter-2.1.34-Setup.exe"
-start "" explorer.exe /select,"%CD%\installer\WoWInterpreter-2.1.34-Setup.exe"
+echo "%CD%\installer\WoWInterpreter-2.2.0-Setup.exe"
+start "" explorer.exe /select,"%CD%\installer\WoWInterpreter-2.2.0-Setup.exe"
 pause
 exit /b 0
 

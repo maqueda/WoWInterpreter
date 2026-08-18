@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from Bridge.kt07_decoder import Geometry
-from Bridge.kt07_relocation import validate_candidate_rois
+from Bridge.kt07_relocation import RelocationPendingState, validate_candidate_rois
 from Bridge.kt07_tracker import KT07DuplicateSuppressor, KT07GeometryTracker
 
 
@@ -16,6 +16,141 @@ IMAGE = object()
 
 
 class KT07LiveCycleTests(unittest.TestCase):
+
+    def test_idle_visible_early_misses_recover_at_trusted_geometry(self):
+        gate = KT07DuplicateSuppressor()
+        tracker = KT07GeometryTracker()
+        tracker.geometry = G1
+
+        with patch("Bridge.kt07_tracker.decode_at", return_value="payload A"):
+            a = tracker.decode(IMAGE, ANCHOR, PITCH)
+        self.assertEqual("payload A", gate.observe(a.text, a.state, True))
+
+        with patch("Bridge.kt07_tracker.decode_at", return_value=None), patch(
+            "Bridge.kt07_tracker.has_signal_at", return_value=False
+        ):
+            idle = tracker.decode(IMAGE, ANCHOR, PITCH)
+        gate.observe(idle.text, idle.state, True)
+
+        with patch("Bridge.kt07_tracker.decode_at", side_effect=[None, None, "payload B"]), patch(
+            "Bridge.kt07_tracker.has_signal_at", return_value=True
+        ), patch("Bridge.kt07_tracker.decode_local_candidate") as local:
+            early_one = tracker.decode(IMAGE, ANCHOR, PITCH)
+            early_two = tracker.decode(IMAGE, ANCHOR, PITCH)
+            b = tracker.decode(IMAGE, ANCHOR, PITCH)
+
+        self.assertEqual("settling", early_one.state)
+        self.assertEqual("settling", early_two.state)
+        self.assertEqual("fast", b.state)
+        local.assert_not_called()
+        self.assertEqual(G1, tracker.geometry)
+        self.assertEqual("payload B", gate.observe(b.text, b.state, True))
+        self.assertIsNone(gate.observe(b.text, b.state, True))
+
+        with patch("Bridge.kt07_tracker.decode_at", return_value=None), patch(
+            "Bridge.kt07_tracker.has_signal_at", return_value=False
+        ):
+            idle = tracker.decode(IMAGE, ANCHOR, PITCH)
+        gate.observe(idle.text, idle.state, True)
+        with patch("Bridge.kt07_tracker.decode_at", return_value="payload C"):
+            c = tracker.decode(IMAGE, ANCHOR, PITCH)
+        self.assertEqual("payload C", gate.observe(c.text, c.state, True))
+        self.assertEqual(G1, tracker.geometry)
+
+    def test_legacy_collision_then_transient_idle_recovers_payload_c(self):
+        gate = KT07DuplicateSuppressor()
+        tracker = KT07GeometryTracker()
+        tracker.geometry = G1
+
+        with patch("Bridge.kt07_tracker.decode_at", return_value="payload A"):
+            a = tracker.decode(IMAGE, ANCHOR, PITCH)
+        self.assertEqual("payload A", gate.observe(a.text, a.state, tracker.locked))
+
+        with patch("Bridge.kt07_tracker.decode_at", return_value="corrupt$ B"):
+            b = tracker.decode(IMAGE, ANCHOR, PITCH)
+        self.assertEqual("corrupt$ B", gate.observe(b.text, b.state, tracker.locked))
+
+        with patch("Bridge.kt07_tracker.decode_at", return_value=None), patch(
+            "Bridge.kt07_tracker.has_signal_at", return_value=True
+        ):
+            transient = tracker.decode(IMAGE, ANCHOR, PITCH)
+        self.assertEqual("transient", transient.state)
+
+        with patch("Bridge.kt07_tracker.decode_at", return_value=None), patch(
+            "Bridge.kt07_tracker.has_signal_at", return_value=False
+        ):
+            idle = tracker.decode(IMAGE, ANCHOR, PITCH)
+        self.assertEqual("idle", idle.state)
+        self.assertIsNone(gate.observe(idle.text, idle.state, tracker.locked))
+
+        with patch("Bridge.kt07_tracker.decode_at", return_value="payload C"):
+            c = tracker.decode(IMAGE, ANCHOR, PITCH)
+        self.assertEqual("payload C", gate.observe(c.text, c.state, tracker.locked))
+        self.assertEqual(G1, tracker.geometry)
+
+    def test_stationary_fullscreen_startup_payload_idle_cycle(self):
+        gate = KT07DuplicateSuppressor()
+        tracker = KT07GeometryTracker()
+        pending = RelocationPendingState()
+        snapshot = object()
+        pending.bind_snapshot(snapshot)
+
+        with patch(
+            "Bridge.kt07_tracker.decode_near_anchor",
+            return_value=("one fullscreen payload", G1),
+        ):
+            locked = tracker.decode(IMAGE, ANCHOR, PITCH)
+
+        self.assertEqual("calibrated", locked.state)
+        self.assertEqual(
+            "one fullscreen payload",
+            gate.observe(locked.text, locked.state, tracker.locked),
+        )
+        self.assertIsNone(gate.observe(locked.text, "fast", tracker.locked))
+
+        with patch("Bridge.kt07_tracker.decode_at", return_value=None), patch(
+            "Bridge.kt07_tracker.has_signal_at", return_value=False
+        ):
+            idle = tracker.decode(IMAGE, ANCHOR, PITCH)
+
+        self.assertEqual("idle", idle.state)
+        self.assertIsNone(gate.observe(idle.text, idle.state, tracker.locked))
+        self.assertTrue(tracker.locked)
+        self.assertEqual(G1, tracker.geometry)
+        self.assertFalse(pending.pending)
+
+    def test_stationary_geometry_survives_transient_and_speculative_candidate(self):
+        gate = KT07DuplicateSuppressor()
+        tracker = KT07GeometryTracker(local_after=2, unlock_after=5, exhaustive_after=9)
+        tracker.geometry = G1
+        pending = RelocationPendingState()
+        pending.bind_snapshot(object())
+        wrong = Geometry(6.75, 9.75, 3.25, 2.75)
+
+        self.assertEqual("first", gate.observe("first", "fast", True))
+        self.assertIsNone(gate.observe(None, "idle", True))
+
+        with patch("Bridge.kt07_tracker.decode_at", side_effect=[None, None, None, "second translation after 30"]), patch(
+            "Bridge.kt07_tracker.has_signal_at", return_value=True
+        ), patch(
+            "Bridge.kt07_tracker.decode_local_candidate",
+            return_value=(("second trangm` dfe%slation after 30", wrong), 1),
+        ):
+            transient = tracker.decode(IMAGE, ANCHOR, PITCH)
+            candidate = tracker.decode(IMAGE, ANCHOR, PITCH)
+            repeated_capture = tracker.decode(IMAGE, ANCHOR, PITCH)
+            recovered = tracker.decode(IMAGE, ANCHOR, PITCH)
+
+        self.assertEqual("transient", transient.state)
+        self.assertEqual("local-candidate", candidate.state)
+        self.assertEqual("local-candidate", repeated_capture.state)
+        self.assertEqual("fast", recovered.state)
+        self.assertEqual(G1, tracker.geometry)
+        self.assertEqual(
+            "second translation after 30",
+            gate.observe(recovered.text, recovered.state, tracker.locked),
+        )
+        self.assertFalse(pending.pending)
 
     def test_failed_relocation_probe_does_not_block_same_geometry_message(self):
         from PIL import Image
@@ -59,11 +194,7 @@ class KT07LiveCycleTests(unittest.TestCase):
             "Bridge.kt07_tracker.decode_near_anchor",
             return_value=None,
         ):
-            result = tracker.decode(
-                IMAGE,
-                ANCHOR,
-                PITCH,
-            )
+            result = tracker.decode(IMAGE, ANCHOR, PITCH)
 
         self.assertEqual(
             "calibration-miss",
@@ -94,12 +225,7 @@ class KT07LiveCycleTests(unittest.TestCase):
         ) as fast, patch(
             "Bridge.kt07_tracker.decode_near_anchor",
         ) as calibrate:
-
-            result = tracker.decode(
-                IMAGE,
-                ANCHOR,
-                PITCH,
-            )
+            result = tracker.decode(IMAGE, ANCHOR, PITCH)
 
         self.assertEqual("fast", result.state)
         self.assertEqual("second", result.text)
@@ -137,15 +263,10 @@ class KT07LiveCycleTests(unittest.TestCase):
             "Bridge.kt07_tracker.has_signal_at",
             return_value=True,
         ), patch(
-            "Bridge.kt07_tracker.decode_near_anchor",
-            return_value=("moved", G2),
+            "Bridge.kt07_tracker.decode_local_candidate",
+            return_value=(("moved", G2), 1),
         ) as calibrate:
-
-            result = tracker.decode(
-                IMAGE,
-                ANCHOR,
-                PITCH,
-            )
+            result = tracker.decode(IMAGE, ANCHOR, PITCH)
 
         self.assertEqual(
             "local-candidate",
@@ -155,12 +276,19 @@ class KT07LiveCycleTests(unittest.TestCase):
         self.assertEqual(G1, tracker.geometry)
         self.assertTrue(tracker.locked)
 
-        self.assertFalse(
-            calibrate.call_args.kwargs["exhaustive"]
-        )
+        calibrate.assert_called_once()
 
-        # The same independently validated candidate must be seen again
-        # before replacing the existing geometry.
+        # Repeated screenshots of the same displayed transport do not count
+        # as independent confirmation. An idle boundary arms the candidate
+        # for confirmation by a later transport frame.
+        with patch(
+            "Bridge.kt07_tracker.decode_at", return_value=None
+        ), patch(
+            "Bridge.kt07_tracker.has_signal_at", return_value=False
+        ):
+            idle = tracker.decode(IMAGE, ANCHOR, PITCH)
+        self.assertEqual("idle", idle.state)
+
         with patch(
             "Bridge.kt07_tracker.decode_at",
             return_value=None,
@@ -168,27 +296,22 @@ class KT07LiveCycleTests(unittest.TestCase):
             "Bridge.kt07_tracker.has_signal_at",
             return_value=True,
         ), patch(
-            "Bridge.kt07_tracker.decode_near_anchor",
-            return_value=("moved", G2),
+            "Bridge.kt07_tracker.decode_local_candidate",
+            return_value=(("moved", G2), 1),
         ) as calibrate:
-
-            result = tracker.decode(
-                IMAGE,
-                ANCHOR,
-                PITCH,
-            )
+            settling = [tracker.decode(IMAGE, ANCHOR, PITCH) for _ in range(10)]
+            result = tracker.decode(IMAGE, ANCHOR, PITCH)
 
         self.assertEqual(
             "local-recalibrated",
             result.state,
         )
+        self.assertEqual({"settling"}, {item.state for item in settling})
         self.assertEqual("moved", result.text)
         self.assertEqual(G2, tracker.geometry)
         self.assertTrue(tracker.locked)
 
-        self.assertFalse(
-            calibrate.call_args.kwargs["exhaustive"]
-        )
+        calibrate.assert_called_once()
 
         # 6. New geometry immediately returns to fast path.
         with patch(
@@ -219,8 +342,8 @@ class KT07LiveCycleTests(unittest.TestCase):
                 "Bridge.kt07_tracker.has_signal_at",
                 return_value=True,
             ), patch(
-                "Bridge.kt07_tracker.decode_near_anchor",
-                return_value=None,
+                "Bridge.kt07_tracker.decode_local_candidate",
+                return_value=(None, 625),
             ):
                 result = tracker.decode(
                     IMAGE,

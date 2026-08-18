@@ -2,13 +2,13 @@
 
 Thanks for your interest in WoWInterpreter.
 
-Before making code changes, please read the [Development Guide](Documentation/DEVELOPMENT.md). It documents the project architecture, KT07 protocol, addon/Bridge compatibility requirements, debugging workflow, performance constraints, testing expectations and release process.
+Before making code changes, please read the [Development Guide](Documentation/DEVELOPMENT.md). It documents the KT08-first architecture, KT07 compatibility fallback, addon/Bridge requirements, debugging workflow, performance constraints, testing expectations and release process.
 
 For bug reports, please include:
 - WoWInterpreter version
 - Windows version
 - WoW client/version
-- whether the KT07 grid appears
+- whether the visual transport appears and whether the log identifies KT08 or KT07
 - the relevant section of `WoWInterpreter.log`
 - exact steps to reproduce
 

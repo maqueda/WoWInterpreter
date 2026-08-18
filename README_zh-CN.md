@@ -2,7 +2,7 @@
 
 **面向《魔兽世界》经典怀旧服玩家的英语 ↔ 简体中文交流辅助工具。**
 
-[English README](README.md) · [英文用户指南](Documentation/WoWInterpreter-2.1.34-User-Guide-English.docx) · [简体中文用户指南](Documentation/WoWInterpreter-2.1.34-User-Guide-Chinese-Simplified.docx)
+[English README](README.md) · [英文用户指南](Documentation/WoWInterpreter-2.2.0-User-Guide-English.docx) · [简体中文用户指南](Documentation/WoWInterpreter-2.2.0-User-Guide-Chinese-Simplified.docx)
 
 WoWInterpreter 由游戏内插件和 Windows 托盘程序组成。插件把聊天文字通过视觉传输发送给 Windows Bridge，Bridge 在英语和简体中文之间进行翻译，然后把结果显示在可滚动的覆盖窗口中。
 
@@ -32,7 +32,7 @@ WoWInterpreter 由游戏内插件和 Windows 托盘程序组成。插件把聊�
 
 普通用户请在 GitHub **Releases** 页面下载：
 
-`WoWInterpreter-2.1.34-Setup.exe`
+`WoWInterpreter-2.2.0-Setup.exe`
 
 安装完成后：
 
@@ -63,7 +63,7 @@ WoW 聊天 / /wi
       ↓
 WoWInterpreter 游戏插件
       ↓
-KT06 视觉传输
+KT08 视觉传输（旧版插件可安全回退到 KT07）
       ↓
 Windows Bridge
       ↓

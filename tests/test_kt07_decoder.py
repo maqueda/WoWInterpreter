@@ -1,8 +1,10 @@
 import time
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 from PIL import Image, ImageDraw
 
-from Bridge.kt07_decoder import (COLS, Geometry, MAGIC, capture_box_for_geometry, decode_at, decode_near_anchor, decode_relocation_candidate, has_signal_at)
+from Bridge.kt07_decoder import (COLS, Geometry, MAGIC, audit_initial_candidate, capture_box_for_geometry, decode_at, decode_local_candidate, decode_near_anchor, decode_relocation_candidate, has_signal_at, summarize_initial_consensus)
 
 IDEAL = (31, 92, 163, 224)
 
@@ -36,6 +38,123 @@ def render(text, geometry, size=(900, 260)):
 
 
 class KT07DecoderTests(unittest.TestCase):
+
+    def test_real_fullscreen_ambiguity_fixture_remains_rejected(self):
+        fixture = Path(__file__).parent / "fixtures" / "kt07_initial_ambiguity.png"
+        image = Image.open(fixture).convert("RGB")
+        anchor_box = (11, 1, 71, 11)
+        found = decode_near_anchor(image, anchor_box, 5.0, exhaustive=False)
+        diagnostic = audit_initial_candidate(image, anchor_box, 5.0, found)
+        self.assertTrue(diagnostic["ambiguous"])
+        self.assertEqual(21, diagnostic["total_valid_candidates"])
+        self.assertEqual(2, diagnostic["unique_payload_count"])
+        supports = sorted(
+            group["support_count"] for group in diagnostic["payload_groups"]
+        )
+        self.assertEqual([9, 12], supports)
+    @staticmethod
+    def _consensus_candidates(populations):
+        candidates = []
+        order = 0
+        for text, count in populations:
+            for index in range(count):
+                order += 1
+                geometry = Geometry(
+                    7.25 + (index % 4) * .25,
+                    16.0 + ((index // 4) % 4) * .25,
+                    5.75 + (index % 3) * .125,
+                    5.625 + ((index // 3) % 3) * .125,
+                )
+                candidates.append({
+                    "order": order,
+                    "geometry": geometry,
+                    "text": text,
+                    "payload_hex": text.encode("utf-8").hex(),
+                    "anchor_pitch_error": abs(5.875 - geometry.pitch_x) + abs(5.75 - geometry.pitch_y),
+                    "anchor_origin_error": abs(7.5 - geometry.x) + abs(16.5 - geometry.y),
+                })
+        return candidates
+
+    def test_real_118_to_1_consensus_ignores_first_corrupt_candidate(self):
+        corrupt = "OUT\tYou\tTUU\x14Ynf\x14dieting t(e first ira"
+        correct = "OUT\tYou\tTesting the first translation"
+        candidates = self._consensus_candidates(((corrupt, 1), (correct, 118)))
+        result = summarize_initial_consensus(candidates)
+        self.assertTrue(result["consensus_accepted"])
+        self.assertEqual(118, result["winning_support"])
+        self.assertEqual(1, result["runner_up_support"])
+        self.assertEqual(correct, result["selected_text"])
+        winning_geometries = {
+            item["geometry"] for item in candidates if item["text"] == correct
+        }
+        self.assertIn(result["selected_geometry"], winning_geometries)
+
+    def test_conservative_consensus_rejects_competitive_populations(self):
+        for winner, runner in ((1, 1), (2, 1), (3, 2), (6, 4), (60, 40)):
+            with self.subTest(winner=winner, runner=runner):
+                result = summarize_initial_consensus(
+                    self._consensus_candidates((("任意一", winner), ("arbitrary two", runner)))
+                )
+                self.assertFalse(result["consensus_accepted"])
+
+    def test_consensus_accepts_99_to_1_and_unanimous_or_single(self):
+        overwhelming = summarize_initial_consensus(
+            self._consensus_candidates((("任意 UTF-8", 99), ("other", 1)))
+        )
+        unanimous = summarize_initial_consensus(
+            self._consensus_candidates((("binary-safe ✓", 12),))
+        )
+        single = summarize_initial_consensus(
+            self._consensus_candidates((("single", 1),))
+        )
+        self.assertTrue(overwhelming["consensus_accepted"])
+        self.assertTrue(unanimous["consensus_accepted"])
+        self.assertTrue(single["consensus_accepted"])
+
+    def test_representative_geometry_uses_anchor_errors_not_order(self):
+        candidates = self._consensus_candidates((("same bytes", 12),))
+        candidates[0]["anchor_pitch_error"] = 99
+        candidates[0]["anchor_origin_error"] = 99
+        result = summarize_initial_consensus(candidates)
+        self.assertNotEqual(candidates[0]["geometry"], result["selected_geometry"])
+    def test_initial_audit_reports_and_rejects_competing_valid_payloads(self):
+        first = Geometry(7.5, 16.5, 5.875, 5.625)
+        correct = Geometry(7.75, 16.5, 5.875, 5.75)
+
+        def details(_image, geometry):
+            text = None
+            if geometry == first:
+                text = "this is thi!!ir!t(e first ira"
+            elif geometry == correct:
+                text = "任意 UTF-8 payload"
+            if text is None:
+                return None
+            payload = text.encode("utf-8")
+            checksum = (sum(MAGIC) + len(payload) + sum(payload)) % 256
+            return {
+                "geometry": geometry,
+                "magic": MAGIC,
+                "length": len(payload),
+                "checksum_expected": checksum,
+                "checksum_actual": checksum,
+                "text": text,
+            }
+
+        with patch(
+            "Bridge.kt07_decoder._quick_magic_prefix", return_value=True
+        ), patch(
+            "Bridge.kt07_decoder.decode_details", side_effect=details
+        ):
+            diagnostic = audit_initial_candidate(
+                object(), (6, 1, 78, 13), 6.0, ("wrong", first)
+            )
+
+        self.assertTrue(diagnostic["ambiguous"])
+        self.assertEqual(2, len(diagnostic["candidates"]))
+        self.assertEqual(
+            {"this is thi!!ir!t(e first ira", "任意 UTF-8 payload"},
+            {candidate["text"] for candidate in diagnostic["candidates"]},
+        )
     def test_capture_box_scales_with_geometry(self):
         small = Geometry(7.5, 16.5, 3.0, 3.0)
         large = Geometry(7.5, 16.5, 8.0, 7.75)
@@ -194,8 +313,18 @@ class KT07DecoderTests(unittest.TestCase):
         )
         elapsed = time.perf_counter() - started
         self.assertIsNone(result)
-        self.assertEqual(23_125, diagnostic["decode_attempts"])
-        self.assertEqual(23_125, diagnostic["geometry_candidates"])
+        self.assertEqual(24_375, diagnostic["decode_attempts"])
+        self.assertEqual(24_375, diagnostic["geometry_candidates"])
+        self.assertLess(elapsed, 0.5)
+
+    def test_failed_locked_local_search_is_bounded(self):
+        image = Image.new("RGB", (420, 350), (92, 92, 92))
+        trusted = Geometry(7.5, 16.5, 5.875, 5.75)
+        started = time.perf_counter()
+        result, attempts = decode_local_candidate(image, trusted)
+        elapsed = time.perf_counter() - started
+        self.assertIsNone(result)
+        self.assertEqual(625, attempts)
         self.assertLess(elapsed, 0.5)
 
     def test_checksum_corruption_is_rejected(self):

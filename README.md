@@ -2,7 +2,7 @@
 
 **English ↔ Simplified Chinese communication assistant for World of Warcraft Classic Era.**
 
-[简体中文说明](README_zh-CN.md) · [User Guide](Documentation/WoWInterpreter-2.1.34-User-Guide-English.docx) · [中文用户指南](Documentation/WoWInterpreter-2.1.34-User-Guide-Chinese-Simplified.docx)
+[简体中文说明](README_zh-CN.md) · [User Guide](Documentation/WoWInterpreter-2.2.0-User-Guide-English.docx) · [中文用户指南](Documentation/WoWInterpreter-2.2.0-User-Guide-Chinese-Simplified.docx)
 
 WoWInterpreter combines a World of Warcraft addon with a small Windows tray application. The addon transports chat text to the Windows bridge, the bridge translates between English and Simplified Chinese, and the result is shown in a scrollable overlay.
 
@@ -22,6 +22,8 @@ The demo above shows WoWInterpreter translating player communication directly wh
 - Recent-message selection with `/wi list` and `/wi last`.
 - Manual and automatic translation modes.
 - Scrollable translation overlay.
+- Fullscreen and Windowed operation with automatic transport relocation after moves, resizes and display-mode changes.
+- The overlay automatically stays clear of the transport during acquisition and relocation.
 - Windows notification-area controls: Start, Stop, Status, diagnostic log and Exit.
 - Translation engine is stopped until the user explicitly chooses **Start translator**.
 - Bilingual English / Simplified Chinese Windows installer.
@@ -30,7 +32,7 @@ The demo above shows WoWInterpreter translating player communication directly wh
 
 ## Download
 
-For normal users, download **`WoWInterpreter-2.1.34-Setup.exe`** from the GitHub Releases page. Do not download the source ZIP unless you want to build the project yourself.
+For normal users, download **`WoWInterpreter-2.2.0-Setup.exe`** from the GitHub Releases page. Do not download the source ZIP unless you want to build the project yourself.
 
 After installation:
 
@@ -61,7 +63,7 @@ WoW chat / /wi
       ↓
 WoWInterpreter addon
       ↓
-KT07 visual transport
+KT08 visual transport (with a safe KT07 legacy fallback for older addon versions)
       ↓
 Windows Bridge
       ↓
@@ -89,7 +91,7 @@ See the complete English and Chinese guides in `Documentation/`.
 
 Interested in contributing to WoWInterpreter or understanding how the project works internally?
 
-See the [Development Guide](Documentation/DEVELOPMENT.md) for a detailed description of the architecture, KT07 visual transport, addon/Bridge protocol, translation pipeline, debugging, performance considerations, Windows builds, testing and release process.
+See the [Development Guide](Documentation/DEVELOPMENT.md) for a detailed description of the architecture, KT08 visual transport with KT07 legacy fallback, addon/Bridge protocol, translation pipeline, debugging, performance considerations, Windows builds, testing and release process.
 
 For contribution requirements, also see [CONTRIBUTING.md](CONTRIBUTING.md).
 

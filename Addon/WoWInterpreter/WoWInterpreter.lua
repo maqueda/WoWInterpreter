@@ -3,72 +3,117 @@ local MAX_BYTES=180
 local COLS=32
 local CELL=4
 local ANCHOR_H=8
-local MAGIC={75,84,48,55} -- KT07
+local MAGIC="KT08"
+local VERSION=1
+local FLAGS=0
+local FRAME_MAX_BYTES=16+MAX_BYTES
+local DATA_ROWS=math.ceil((FRAME_MAX_BYTES*4)/COLS)
+local GRID_COLS=36
+local GRID_ROWS=29
 local levels={0.12,0.36,0.64,0.88}
-local FRAME_BYTES=5+MAX_BYTES+1
-local DATA_CELLS=FRAME_BYTES*4
-local ROWS=math.ceil(DATA_CELLS/COLS)
-local cells={}
-
-KT:SetSize(COLS*CELL+4,ROWS*CELL+4+ANCHOR_H)
-KT:SetPoint("TOPLEFT",UIParent,"TOPLEFT",2,-2)
-KT:SetFrameStrata("TOOLTIP")
-KT:Hide()
-
-local bg=KT:CreateTexture(nil,"BACKGROUND")
-bg:SetAllPoints(); bg:SetColorTexture(0,0,0,1)
-
--- KT07: deterministic RGB/YCM visual anchor. World colours are irrelevant.
 local anchorColors={{1,0,0},{0,1,0},{0,0,1},{1,1,0},{0,1,1},{1,0,1}}
-for i,c in ipairs(anchorColors) do
- local a=KT:CreateTexture(nil,"OVERLAY")
- a:SetSize(ANCHOR_H,ANCHOR_H)
- a:SetPoint("TOPLEFT",KT,"TOPLEFT",2+(i-1)*ANCHOR_H,-2)
- a:SetColorTexture(c[1],c[2],c[3],1)
+local pilotColors={{1,0,0},{0,1,0},{0,0,1},{1,1,0}}
+local bitlib=bit or bit32
+local buffers={}
+local activeBuffer=nil
+local sequence=0
+
+local function u16(value)
+ return string.char(math.floor(value/256)%256,value%256)
 end
 
-local inner=CreateFrame("Frame",nil,KT)
-inner:SetSize(COLS*CELL,ROWS*CELL)
-inner:SetPoint("TOPLEFT",KT,"TOPLEFT",2,-(2+ANCHOR_H))
-
-for i=1,COLS*ROWS do
- local t=inner:CreateTexture(nil,"OVERLAY")
- t:SetSize(CELL,CELL)
- local z=i-1; local col=z%COLS; local row=math.floor(z/COLS)
- t:SetPoint("TOPLEFT",inner,"TOPLEFT",col*CELL,-row*CELL)
- t:SetColorTexture(0,0,0,1); cells[i]=t
+local function u32(value)
+ return string.char(
+  math.floor(value/16777216)%256,
+  math.floor(value/65536)%256,
+  math.floor(value/256)%256,
+  value%256
+ )
 end
 
-local function sym(i,n)
- local v=levels[n+1]; cells[i]:SetColorTexture(v,v,v,1)
+local function crc32(data)
+ local crc=0xFFFFFFFF
+ for i=1,#data do
+  crc=bitlib.bxor(crc,string.byte(data,i))
+  for _=1,8 do
+   if bitlib.band(crc,1)~=0 then
+    crc=bitlib.bxor(bitlib.rshift(crc,1),0xEDB88320)
+   else
+    crc=bitlib.rshift(crc,1)
+   end
+  end
+ end
+ return bitlib.band(bitlib.bxor(crc,0xFFFFFFFF),0xFFFFFFFF)
 end
-local function byte(i,b)
+
+local function makeBuffer(index)
+ local frame=CreateFrame("Frame","WoWInterpreterKT08Buffer"..index,UIParent)
+ frame:SetSize(GRID_COLS*CELL+4,GRID_ROWS*CELL+4+ANCHOR_H+CELL)
+ frame:SetPoint("TOPLEFT",UIParent,"TOPLEFT",2,-2)
+ frame:SetFrameStrata("TOOLTIP")
+ frame:Hide()
+ local bg=frame:CreateTexture(nil,"BACKGROUND")
+ bg:SetAllPoints(); bg:SetColorTexture(0,0,0,1)
+ for i,c in ipairs(anchorColors) do
+  local anchor=frame:CreateTexture(nil,"OVERLAY")
+  anchor:SetSize(ANCHOR_H,ANCHOR_H)
+  anchor:SetPoint("TOPLEFT",frame,"TOPLEFT",2+(i-1)*ANCHOR_H,-2)
+  anchor:SetColorTexture(c[1],c[2],c[3],1)
+ end
+ local grid=CreateFrame("Frame",nil,frame)
+ grid:SetSize(GRID_COLS*CELL,GRID_ROWS*CELL)
+ -- One logical cell separates the red anchor block from the red TL pilot.
+ -- Without this gap they form one connected raster component.
+ grid:SetPoint("TOPLEFT",frame,"TOPLEFT",2,-(2+ANCHOR_H+CELL))
+ local pilotPositions={{0,0},{34,0},{0,27},{34,27}}
+ for i,c in ipairs(pilotColors) do
+  local pilot=grid:CreateTexture(nil,"OVERLAY")
+  pilot:SetSize(2*CELL,2*CELL)
+  pilot:SetPoint("TOPLEFT",grid,"TOPLEFT",pilotPositions[i][1]*CELL,-pilotPositions[i][2]*CELL)
+  pilot:SetColorTexture(c[1],c[2],c[3],1)
+ end
+ local cells={}
+ for i=1,COLS*DATA_ROWS do
+  local texture=grid:CreateTexture(nil,"OVERLAY")
+  texture:SetSize(CELL,CELL)
+  local z=i-1; local col=z%COLS; local row=math.floor(z/COLS)
+  texture:SetPoint("TOPLEFT",grid,"TOPLEFT",(col+2)*CELL,-(row+2)*CELL)
+  texture:SetColorTexture(0,0,0,1); cells[i]=texture
+ end
+ frame.cells=cells
+ return frame
+end
+
+buffers[1]=makeBuffer(1)
+buffers[2]=makeBuffer(2)
+
+local function sym(buffer,i,n)
+ local v=levels[n+1]; buffer.cells[i]:SetColorTexture(v,v,v,1)
+end
+local function byte(buffer,i,b)
  local k=(i-1)*4+1
- sym(k,math.floor(b/64)%4); sym(k+1,math.floor(b/16)%4)
- sym(k+2,math.floor(b/4)%4); sym(k+3,b%4)
-end
-local function checksum(s)
- local c=0
- for _,v in ipairs(MAGIC) do c=(c+v)%256 end
- c=(c+#s)%256
- for i=1,#s do c=(c+string.byte(s,i))%256 end
- return c
-end
-local function hide()
- KT:Hide()
+ sym(buffer,k,math.floor(b/64)%4); sym(buffer,k+1,math.floor(b/16)%4)
+ sym(buffer,k+2,math.floor(b/4)%4); sym(buffer,k+3,b%4)
 end
 local function publish(text)
  if not text or text=="" then print("|cff33ff99KT:|r /kt <text>"); return end
  if #text>MAX_BYTES then print("|cffff5555KT:|r max "..MAX_BYTES.." bytes"); return end
- for i=1,#cells do cells[i]:SetColorTexture(0,0,0,1) end
- local bi=1
- for _,v in ipairs(MAGIC) do byte(bi,v); bi=bi+1 end
- byte(bi,#text); bi=bi+1
- for i=1,#text do byte(bi,string.byte(text,i)); bi=bi+1 end
- byte(bi,checksum(text))
- KT:Show()
- -- debug output intentionally suppressed in v1.3
- C_Timer.After(3.0,hide)
+ sequence=(sequence+1)%65536
+ local body=MAGIC..string.char(VERSION,FLAGS)..u16(sequence)..u16(#text)..text..u16(sequence)
+ local frameBytes=body..u32(crc32(body))
+ local nextBuffer=(activeBuffer==buffers[1]) and buffers[2] or buffers[1]
+ for i=1,#nextBuffer.cells do nextBuffer.cells[i]:SetColorTexture(0,0,0,1) end
+ for i=1,#frameBytes do byte(nextBuffer,i,string.byte(frameBytes,i)) end
+ if activeBuffer then activeBuffer:Hide() end
+ activeBuffer=nextBuffer
+ activeBuffer:Show()
+ local publishedBuffer=activeBuffer
+ local publishedSequence=sequence
+ C_Timer.After(3.0,function()
+  if activeBuffer==publishedBuffer and sequence==publishedSequence then
+   activeBuffer:Hide()
+  end
+ end)
 end
 local queue={}
 local busy=false
@@ -292,7 +337,7 @@ local function setIncomingMode(mode)
 end
 
 local function printHelp()
- print("|cff33ff99WoWInterpreter v2.1.34|r - English <-> Simplified Chinese")
+ print("|cff33ff99WoWInterpreter v2.2.0|r - English <-> Simplified Chinese")
  print("|cffffff00/wi <text>|r - translate text")
  print("|cffffff00/wi last|r - translate latest received message")
  print("|cffffff00/wi list|r - choose a recent message")

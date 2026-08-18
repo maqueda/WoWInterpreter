@@ -1,6 +1,6 @@
 ## Interface: 11403
 ## Title: WoWInterpreter
 ## Notes: English <-> Simplified Chinese chat translator
-## Version: 2.1.34
+## Version: 2.2.0
 
 WoWInterpreter.lua

@@ -93,6 +93,9 @@ jobs:
         run: |
           if (-not (Test-Path "dist/WoWInterpreter/WoWInterpreter.exe")) { throw "Frozen executable was not produced." }
           $internal = "dist/WoWInterpreter/_internal"
+          foreach ($module in @("kt08_protocol.py", "kt08_geometry.py", "kt08_decoder.py", "kt08_tracker.py")) {
+            if (-not (Test-Path "$internal/Bridge/$module")) { throw "Frozen runtime missing Bridge/$module" }
+          }
           foreach ($package in @("tqdm", "transformers", "torch", "tokenizers", "huggingface_hub", "packaging", "numpy")) {
             $metadata = Get-ChildItem $internal -Directory -Filter "$package-*.dist-info" -ErrorAction SilentlyContinue
             if (-not $metadata) { Write-Warning "Metadata for $package was not found in the frozen runtime." }
