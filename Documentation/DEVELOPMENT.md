@@ -642,6 +642,13 @@ Release versions may appear in:
 
 Search for the previous version before tagging, but do not blindly replace historical changelog references.
 
+`CHANGELOG.md` is the single source of truth for GitHub Release notes. Each
+release requires a non-empty `## [X.Y.Z] - YYYY-MM-DD` section. The Windows
+release workflow extracts exactly that section for tag `vX.Y.Z`, then appends
+the installer SHA-256 and a compare link to the previous reachable stable
+SemVer tag. A missing or empty section fails before publication; do not compose
+release notes manually in GitHub.
+
 Example:
 
 ```text
