@@ -14,6 +14,7 @@ All notable WoWInterpreter changes are documented here.
 - Preserved English/Simplified Chinese translation behavior and sequence-aware duplicate suppression.
 - Added real-raster regression fixtures and expanded protocol, acquisition, relocation, overlay and race-condition tests.
 - Removed obsolete successful-runtime screenshot diagnostics and clarified transport logging.
+- Bounded the runtime log to 5 MiB plus three backups and retained only the ten newest recognized diagnostic event sets.
 - Updated runtime, addon, installer, build and documentation metadata for 2.2.0.
 
 ## [2.1.34] - 2026-08-13

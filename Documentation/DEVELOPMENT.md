@@ -460,6 +460,12 @@ The normal application writes:
 WoWInterpreter.log
 ```
 
+The file lives beside `WoWInterpreter.exe`. The Tray is its only writer: Bridge
+stdout/stderr is relayed to the Tray over a pipe. The current file is limited
+to approximately 5 MiB and three backups (`.1`, `.2`, `.3`) are retained, for
+approximately 20 MiB total. Rotation closes each append before renaming, so a
+Bridge restart neither truncates the log nor creates a second file owner.
+
 Useful diagnostic prefixes may include:
 
 ```text
@@ -483,16 +489,26 @@ Failure-only transport diagnostics can include:
 - `kt07_relocation_failure.png`, `_reduced.png`, `_closest.png` and `.txt`:
   overwritten bounded KT07 discovery evidence;
 - `kt07_relocation_failure_<generation>_validation.png/.txt`: first strict
-  KT07 validation failure for a generation, retaining the newest three;
+  KT07 validation failure for a generation;
 - `kt08_initial_failure_<counter>.png/.txt`: first immutable KT08 failure in
   one visible initial-acquisition interval;
 - `kt08_relocation_failure_<generation>_validation.png/.txt`: first KT08
-  relocation failure for a generation, retaining the newest three.
+  relocation failure for a generation;
+- `kt07_visible_capture.png`, `kt07_visible_crop.png` and `kt07_geometry.txt`:
+  one legacy KT07 geometry evidence set.
+
+Only explicitly recognized files inside the runtime `Bridge` directory are
+eligible for cleanup. PNG/TXT files for one numbered event form one set, and
+the ten most recently modified sets are retained globally. Unknown files,
+repository fixtures under `tests/fixtures`, assets and documentation are never
+eligible. Cleanup runs once during Bridge initialization and after a diagnostic
+is written, never in the capture loop or normal translation path.
 
 The PNG is the raw or bounded capture used by the decoder; its paired TXT
 contains geometry, candidate, validation and native-generation evidence. Normal
 successful messages do not write transport screenshots. When reporting a
-failure, collect `WoWInterpreter.log` and the matching PNG/TXT pair.
+failure, collect `WoWInterpreter.log` (plus recent numbered backups when the
+event is older) and the matching PNG/TXT pair.
 
 Diagnostic screenshots can contain visible game content. Inspect and redact them before posting publicly.
 

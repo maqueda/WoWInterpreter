@@ -380,13 +380,13 @@ class KT07RelocationTests(unittest.TestCase):
             self.assertEqual((420, 350), preserved.size)
             self.assertEqual((11, 22, 33), preserved.getpixel((200, 200)))
 
-    def test_validation_failure_retention_keeps_latest_three_generations(self):
+    def test_validation_failure_retention_is_centralized_by_runtime_directory(self):
         image = Image.new("RGB", (20, 20), (1, 2, 3))
         with tempfile.TemporaryDirectory() as directory:
             for generation in range(1, 6):
                 preserve_validation_failure(image, directory, generation, {})
             names = {path.name for path in Path(directory).iterdir()}
-            self.assertFalse(any("_1" in name or "_2" in name for name in names))
+            self.assertTrue(any("_1" in name and "validation" in name for name in names))
             for generation in (3, 4, 5):
                 self.assertIn(
                     f"kt07_relocation_failure_{generation}_validation.png", names

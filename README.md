@@ -85,6 +85,14 @@ If the grid appears but no translation is produced, right-click the **WI** tray 
 
 If CPU usage is not wanted, choose **Stop translator**. This stops the Bridge and translation engine.
 
+`WoWInterpreter.log` is stored beside the installed executable. It rotates at
+approximately 5 MiB and keeps three backups (`.1` through `.3`), for roughly
+20 MiB maximum. When reporting a transport failure, attach the current log,
+its recent backups if relevant, and the matching PNG/TXT diagnostic pair from
+the installed `_internal/Bridge` directory. At most ten recognized diagnostic
+event sets are retained. Screenshots may contain visible game content, so
+inspect them before sharing.
+
 See the complete English and Chinese guides in `Documentation/`.
 
 ## Development

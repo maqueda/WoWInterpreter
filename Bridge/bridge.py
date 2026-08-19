@@ -34,6 +34,7 @@ from Bridge.kt07_relocation import (
     save_discovery_diagnostic,
     validate_candidate_rois,
 )
+from Bridge.runtime_housekeeping import cleanup_runtime_diagnostics, report_stream_error
 
 MAX_BYTES=180
 COLS=32
@@ -41,10 +42,12 @@ MAGIC=[75,84,48,55]
 IDEAL=[31,92,163,224]
 HERE=Path(__file__).resolve().parent
 DEBUG=HERE/"debug_capture.png"
+cleanup_runtime_diagnostics(HERE)
 
 def save_debug(im, reason):
     try:
         im.save(DEBUG)
+        cleanup_runtime_diagnostics(HERE)
         print(f"[debug] {reason}. Screenshot saved: {DEBUG}")
     except Exception as e: print("[debug] save failed:",e)
 
@@ -153,6 +156,7 @@ def _save_initial_calibration_ambiguity(image, diagnostic):
             pprint.pformat(diagnostic,sort_dicts=False,width=140)+"\n",
             encoding="utf-8",
         )
+        cleanup_runtime_diagnostics(HERE)
         print(
             "[KT07] Initial calibration consensus diagnostic: "
             f"decision={diagnostic['consensus_reason']} "
@@ -209,6 +213,7 @@ def save_kt07_diagnostic(im,geo):
         print(f"[DIAG] KT07 visible screenshot: {path}",flush=True)
         print(f"[DIAG] KT07 visible crop: {crop_path}",flush=True)
         print(f"[DIAG] KT07 geometry report: {log_path}",flush=True)
+        cleanup_runtime_diagnostics(HERE)
     except Exception as e:
         print("[DIAG] Failed to save KT07 diagnostic:",repr(e),flush=True)
 
@@ -1991,7 +1996,7 @@ def worker():
    )
 
   except Exception as e:
-   print("ERROR:",repr(e),flush=True)
+   report_stream_error(e)
    time.sleep(.3)
 
 threading.Thread(target=worker,daemon=True).start()

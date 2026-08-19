@@ -13,7 +13,7 @@ echo [1/6] Building self-contained application...
 call build_windows.bat
 if errorlevel 1 goto :fail
 if not exist "dist\WoWInterpreter\WoWInterpreter.exe" goto :fail
-for %%M in (kt08_protocol.py kt08_geometry.py kt08_decoder.py kt08_tracker.py) do (
+for %%M in (kt08_protocol.py kt08_geometry.py kt08_decoder.py kt08_tracker.py runtime_housekeeping.py) do (
   if not exist "dist\WoWInterpreter\_internal\Bridge\%%M" (
     echo ERROR: Frozen runtime missing Bridge\%%M.
     goto :fail

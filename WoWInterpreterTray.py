@@ -3,6 +3,7 @@ from pathlib import Path
 from datetime import datetime
 import pystray
 from PIL import Image
+from Bridge.runtime_housekeeping import RuntimeLogWriter
 
 APP_NAME="WoWInterpreter"
 FROZEN=getattr(sys,"frozen",False)
@@ -14,12 +15,42 @@ ICON_PATH=RESOURCE_ROOT/"assets"/"WoWInterpreter.ico"
 bridge_proc=None
 lock=threading.Lock()
 instance_socket=None
+log_writer=RuntimeLogWriter(LOG)
 
 def log(msg):
+    log_writer.write(f"[{datetime.now().isoformat(timespec='seconds')}] {msg}\n")
+
+def relay_bridge_output(proc):
     try:
-        with LOG.open("a",encoding="utf-8") as f:
-            f.write(f"[{datetime.now().isoformat(timespec='seconds')}] {msg}\n")
-    except Exception: pass
+        for line in proc.stdout:
+            log_writer.write(line)
+    except Exception as e:
+        log(f"Bridge output relay failed: {e}")
+    finally:
+        try:
+            proc.stdout.close()
+        except Exception:
+            pass
+
+def spawn_bridge_process(cmd,cwd,creationflags=0,env=None):
+    """Start a Bridge whose UTF-8 output is decoded by the Tray relay."""
+    return subprocess.Popen(
+        cmd,cwd=str(cwd),creationflags=creationflags,
+        stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
+        text=True,encoding="utf-8",errors="replace",bufsize=1,
+        env=env,
+    )
+
+def configure_bridge_stdio():
+    """Force the child-side pipe encoders to UTF-8, independent of Windows ACP."""
+    for name in ("stdout","stderr"):
+        stream=getattr(sys,name,None)
+        reconfigure=getattr(stream,"reconfigure",None)
+        if callable(reconfigure):
+            reconfigure(
+                encoding="utf-8",errors="strict",
+                line_buffering=True,write_through=True,
+            )
 
 def is_running():
     return bridge_proc is not None and bridge_proc.poll() is None
@@ -52,8 +83,10 @@ def start(icon,item=None):
                 cmd=[sys.executable,"--bridge"]
             else:
                 cmd=[sys.executable,str(Path(__file__).resolve()),"--bridge"]
-            bridge_proc=subprocess.Popen(cmd,cwd=str(HERE),creationflags=flags)
+            bridge_proc=spawn_bridge_process(cmd,HERE,flags)
             log(f"Bridge child started PID={bridge_proc.pid} cmd={cmd}")
+            threading.Thread(target=relay_bridge_output,args=(bridge_proc,),
+                             name="BridgeLogRelay",daemon=True).start()
             threading.Thread(target=watch_bridge_exit,args=(icon,bridge_proc),
                              name="BridgeExitWatcher",daemon=True).start()
         except Exception as e:
@@ -118,25 +151,28 @@ def main():
     log("Tray loop exited.")
 
 def run_bridge_mode():
-    log("Bridge child mode entered.")
     import runpy
     old_cwd=os.getcwd()
-    stream=open(LOG,"a",encoding="utf-8",buffering=1)
-    old_out,old_err=sys.stdout,sys.stderr
-    sys.stdout=stream; sys.stderr=stream
     try:
+        configure_bridge_stdio()
+        print("[BRIDGE] Bridge child mode entered.",flush=True)
+        print(
+            "[BRIDGE] stdout encoding="
+            f"{getattr(sys.stdout,'encoding',None)} "
+            "stderr encoding="
+            f"{getattr(sys.stderr,'encoding',None)}",
+            flush=True,
+        )
         print(f"[BRIDGE] logging attached. Resource root={RESOURCE_ROOT}",flush=True)
         print(f"[BRIDGE] bridge.py={BRIDGE}",flush=True)
         os.chdir(str(BRIDGE.parent))
         runpy.run_path(str(BRIDGE),run_name="__main__")
     except Exception:
         print("[BRIDGE] UNHANDLED EXCEPTION",flush=True)
-        traceback.print_exc(file=stream)
+        traceback.print_exc(file=sys.stderr)
         raise
     finally:
         os.chdir(old_cwd)
-        sys.stdout,sys.stderr=old_out,old_err
-        stream.close()
 
 if __name__=="__main__":
     try:
@@ -145,4 +181,7 @@ if __name__=="__main__":
         else:
             main()
     except Exception as e:
-        log(f"Fatal: {e}\n{traceback.format_exc()}")
+        if "--bridge" in sys.argv[1:]:
+            print(f"[BRIDGE] Fatal: {e}\n{traceback.format_exc()}",file=sys.stderr,flush=True)
+        else:
+            log(f"Fatal: {e}\n{traceback.format_exc()}")

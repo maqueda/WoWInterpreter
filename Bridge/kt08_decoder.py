@@ -13,6 +13,7 @@ from Bridge.kt08_protocol import (
     crc32,
     decode_frame,
 )
+from Bridge.runtime_housekeeping import cleanup_runtime_diagnostics
 
 
 LEVELS = (31, 92, 163, 224)
@@ -218,16 +219,7 @@ def preserve_failure(image, directory, generation, diagnostic, retain_generation
         pprint.pformat(diagnostic, sort_dicts=False, width=140) + "\n",
         encoding="utf-8",
     )
-    generations = []
-    for path in directory.glob("kt08_relocation_failure_*_validation.png"):
-        value = path.stem.removeprefix("kt08_relocation_failure_").removesuffix("_validation")
-        if value.isdigit():
-            generations.append(int(value))
-    for old in sorted(set(generations))[:-retain_generations]:
-        for suffix in ("_validation.png", ".txt"):
-            stale = directory / f"kt08_relocation_failure_{old}{suffix}"
-            if stale.exists():
-                stale.unlink()
+    cleanup_runtime_diagnostics(directory)
     return image_path, report_path
 
 
@@ -243,4 +235,5 @@ def preserve_initial_failure(image, directory, counter, diagnostic):
         pprint.pformat(diagnostic, sort_dicts=False, width=140) + "\n",
         encoding="utf-8",
     )
+    cleanup_runtime_diagnostics(directory)
     return image_path, report_path

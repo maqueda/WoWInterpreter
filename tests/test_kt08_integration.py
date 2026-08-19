@@ -24,6 +24,7 @@ class KT08IntegrationTests(unittest.TestCase):
         self.assertIn("WoWInterpreter v2.2.0", self.lua)
         self.assertIn('#define MyAppVersion "2.2.0"', self.installer)
         self.assertIn("WoWInterpreter-2.2.0-Setup.exe", self.release_build)
+        self.assertIn("runtime_housekeeping.py", self.release_build)
         for language in ("English", "Chinese-Simplified"):
             self.assertTrue((
                 ROOT / "Documentation" /

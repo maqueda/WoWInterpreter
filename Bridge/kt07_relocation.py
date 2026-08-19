@@ -11,6 +11,7 @@ import pprint
 from PIL import Image, ImageChops, ImageDraw
 
 from Bridge.kt07_decoder import decode_near_anchor, decode_relocation_candidate
+from Bridge.runtime_housekeeping import cleanup_runtime_diagnostics
 
 
 ANCHOR_COLORS = (
@@ -521,6 +522,7 @@ def save_discovery_diagnostic(
         + "".join(f"{key}={value}\n" for key, value in evidence.items()),
         encoding="utf-8",
     )
+    cleanup_runtime_diagnostics(directory)
     return full_path, reduced_path, closest_path, meta_path
 
 
@@ -538,16 +540,7 @@ def preserve_validation_failure(
         pprint.pformat(metadata, sort_dicts=False, width=140) + "\n",
         encoding="utf-8",
     )
-    generations = []
-    for path in directory.glob("kt07_relocation_failure_*_validation.png"):
-        value = path.name.removeprefix("kt07_relocation_failure_").removesuffix("_validation.png")
-        if value.isdigit():
-            generations.append(int(value))
-    for old_generation in sorted(set(generations))[:-retain_generations]:
-        for suffix in ("_validation.png", ".txt"):
-            old_path = directory / f"kt07_relocation_failure_{old_generation}{suffix}"
-            if old_path.exists():
-                old_path.unlink()
+    cleanup_runtime_diagnostics(directory)
     return image_path, report_path
 
 
