@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible WoWInterpreter problem
+description: Report a reproducible WoWInterpreter problem with the details needed to investigate it
 title: "[Bug] "
 labels: ["bug"]
 body:
@@ -7,32 +7,149 @@ body:
     id: version
     attributes:
       label: WoWInterpreter version
+      description: Find this in the WoWInterpreter.log startup line, installer filename, or addon help.
       placeholder: "2.2.1"
     validations:
       required: true
+
   - type: input
-    id: windows
+    id: windows_version
     attributes:
       label: Windows version
+      description: Include the Windows release when known.
+      placeholder: "Windows 11 24H2"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: display_mode
+    attributes:
+      label: WoW display mode
+      options:
+        - Fullscreen
+        - Windowed
+        - Windowed (Maximized)
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: screen_resolution
+    attributes:
+      label: Screen resolution
+      description: Enter the resolution used when the problem occurred.
+      placeholder: "2560x1440"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: failure_timing
+    attributes:
+      label: When does the problem happen?
+      options:
+        - Immediately after starting WoWInterpreter
+        - On the first translation
+        - During normal translation
+        - After switching between Fullscreen and Windowed
+        - After moving or resizing the WoW window
+        - After changing resolution
+        - After restarting the Bridge
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: transport_grid
+    attributes:
+      label: Does the transport grid appear when a message is sent?
+      description: This is the small colored pattern that briefly appears in the top-left area while WoWInterpreter transfers chat data.
+      options:
+        - "Yes, consistently"
+        - "No"
+        - Sometimes / intermittently
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: overlay_status
+    attributes:
+      label: Translation overlay status
+      options:
+        - Appears and works normally
+        - Does not appear
+        - Appears but no translation is shown
+        - Appears in the wrong position
+        - Covers the transport grid
+        - Disappears after changing display mode
+        - Other / Not sure
+    validations:
+      required: true
+
   - type: textarea
     id: problem
     attributes:
       label: What happened?
+      description: Describe what actually happened, including any visible error or incorrect output.
+      placeholder: Tell us what you observed when the problem occurred.
     validations:
       required: true
+
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: Expected behavior
+      description: Briefly describe what you expected WoWInterpreter to do instead.
+      placeholder: The translation should have appeared once in the overlay.
+    validations:
+      required: true
+
   - type: textarea
     id: steps
     attributes:
       label: Steps to reproduce
+      description: Provide the shortest repeatable sequence that causes the problem.
+      placeholder: |
+        1. Start WoW.
+        2. Start WoWInterpreter.
+        3. Send or receive a message.
+        4. The problem occurs.
     validations:
       required: true
-  - type: dropdown
-    id: grid
-    attributes:
-      label: Does the KT06 grid appear?
-      options: ["Yes", "No", "Not sure"]
+
   - type: textarea
-    id: log
+    id: log_output
     attributes:
-      label: Relevant diagnostic log
-      description: Review the log and remove private chat text before posting.
+      label: Relevant WoWInterpreter.log output
+      description: >-
+        Paste only the relevant section around the problem. WoWInterpreter.log may contain chat messages or other text captured from WoW. Review it and remove any private or sensitive chat content before posting it publicly.
+      render: text
+
+  - type: textarea
+    id: diagnostic_files
+    attributes:
+      label: Additional diagnostic files
+      description: >-
+        If WoWInterpreter generated relevant files such as kt08_initial_failure_*.png/.txt, kt08_relocation_failure_*.png/.txt, or kt07_initial_ambiguity.png/.txt, drag and drop them here. Diagnostic images may contain visible parts of the WoW interface or chat; review them before uploading.
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional context
+      description: Add any useful detail not covered above.
+
+  - type: checkboxes
+    id: privacy_confirmation
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I reviewed the attached logs and screenshots and removed any private or sensitive chat content.
+          required: true
+
+  - type: checkboxes
+    id: duplicate_confirmation
+    attributes:
+      label: Duplicate issue confirmation
+      options:
+        - label: I searched existing issues and did not find the same problem.
+          required: true
