@@ -93,7 +93,7 @@ jobs:
         run: |
           if (-not (Test-Path "dist/WoWInterpreter/WoWInterpreter.exe")) { throw "Frozen executable was not produced." }
           $internal = "dist/WoWInterpreter/_internal"
-          foreach ($module in @("kt08_protocol.py", "kt08_geometry.py", "kt08_decoder.py", "kt08_tracker.py", "runtime_housekeeping.py")) {
+          foreach ($module in @("bridge.py", "kt07_decoder.py", "kt07_relocation.py", "kt07_tracker.py", "kt08_protocol.py", "kt08_geometry.py", "kt08_decoder.py", "kt08_tracker.py", "runtime_housekeeping.py")) {
             if (-not (Test-Path "$internal/Bridge/$module")) { throw "Frozen runtime missing Bridge/$module" }
           }
           foreach ($package in @("tqdm", "transformers", "torch", "tokenizers", "huggingface_hub", "packaging", "numpy")) {

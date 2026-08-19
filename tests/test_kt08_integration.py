@@ -18,17 +18,17 @@ class KT08IntegrationTests(unittest.TestCase):
         ast.parse(cls.bridge)
 
     def test_runtime_component_versions_are_consistent(self):
-        self.assertIn("WoWInterpreter Bridge 2.2.0", self.bridge)
-        self.assertIn("WoWInterpreter v2.2.0 starting", self.tray)
-        self.assertIn("## Version: 2.2.0", self.toc)
-        self.assertIn("WoWInterpreter v2.2.0", self.lua)
-        self.assertIn('#define MyAppVersion "2.2.0"', self.installer)
-        self.assertIn("WoWInterpreter-2.2.0-Setup.exe", self.release_build)
+        self.assertIn("WoWInterpreter Bridge 2.2.1", self.bridge)
+        self.assertIn("WoWInterpreter v2.2.1 starting", self.tray)
+        self.assertIn("## Version: 2.2.1", self.toc)
+        self.assertIn("WoWInterpreter v2.2.1", self.lua)
+        self.assertIn('#define MyAppVersion "2.2.1"', self.installer)
+        self.assertIn("WoWInterpreter-2.2.1-Setup.exe", self.release_build)
         self.assertIn("runtime_housekeeping.py", self.release_build)
         for language in ("English", "Chinese-Simplified"):
             self.assertTrue((
                 ROOT / "Documentation" /
-                f"WoWInterpreter-2.2.0-User-Guide-{language}.docx"
+                f"WoWInterpreter-2.2.1-User-Guide-{language}.docx"
             ).is_file())
 
     def test_bridge_dispatches_kt08_before_kt07_initial_calibration(self):

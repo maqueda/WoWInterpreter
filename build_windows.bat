@@ -1,7 +1,7 @@
 @echo off
 setlocal
 cd /d %~dp0
-echo Building WoWInterpreter v2.2.0...
+echo Building WoWInterpreter v2.2.1...
 python -m pip install --upgrade pip
 if errorlevel 1 exit /b 1
 python -m pip install -r requirements-runtime.txt pyinstaller

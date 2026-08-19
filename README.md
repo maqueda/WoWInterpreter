@@ -2,7 +2,7 @@
 
 **English ↔ Simplified Chinese communication assistant for World of Warcraft Classic Era.**
 
-[简体中文说明](README_zh-CN.md) · [User Guide](Documentation/WoWInterpreter-2.2.0-User-Guide-English.docx) · [中文用户指南](Documentation/WoWInterpreter-2.2.0-User-Guide-Chinese-Simplified.docx)
+[简体中文说明](README_zh-CN.md) · [User Guide](Documentation/WoWInterpreter-2.2.1-User-Guide-English.docx) · [中文用户指南](Documentation/WoWInterpreter-2.2.1-User-Guide-Chinese-Simplified.docx)
 
 WoWInterpreter combines a World of Warcraft addon with a small Windows tray application. The addon transports chat text to the Windows bridge, the bridge translates between English and Simplified Chinese, and the result is shown in a scrollable overlay.
 
@@ -32,7 +32,7 @@ The demo above shows WoWInterpreter translating player communication directly wh
 
 ## Download
 
-For normal users, download **`WoWInterpreter-2.2.0-Setup.exe`** from the GitHub Releases page. Do not download the source ZIP unless you want to build the project yourself.
+For normal users, download **`WoWInterpreter-2.2.1-Setup.exe`** from the GitHub Releases page. Do not download the source ZIP unless you want to build the project yourself.
 
 After installation:
 

@@ -2,6 +2,15 @@
 
 All notable WoWInterpreter changes are documented here.
 
+## [2.2.1] - 2026-08-19
+
+### Patch release
+- Added single-writer Tray ownership for UTF-8 Bridge stdout/stderr logging.
+- Bounded `WoWInterpreter.log` to approximately 5 MiB with three retained backups.
+- Bounded recognized runtime diagnostic retention to the ten newest event sets with conservative Windows-safe cleanup.
+- Fixed the frozen Windows Bridge inheriting cp1252 and crashing on Unicode output such as `EN→ZH`.
+- Prevented a secondary logging failure from terminating the translation worker's error path.
+
 ## [2.2.0] - 2026-08-18
 
 ### Stable release

@@ -130,7 +130,7 @@ def quit_app(icon,item=None):
     stop(icon); log("WoWInterpreter exiting."); icon.stop()
 
 def main():
-    log("="*60); log("WoWInterpreter v2.2.0 starting")
+    log("="*60); log("WoWInterpreter v2.2.1 starting")
     log(f"Resource root={RESOURCE_ROOT}")
     if not acquire_single_instance():
         log("Second instance blocked."); return

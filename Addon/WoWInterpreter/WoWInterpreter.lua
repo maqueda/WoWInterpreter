@@ -337,7 +337,7 @@ local function setIncomingMode(mode)
 end
 
 local function printHelp()
- print("|cff33ff99WoWInterpreter v2.2.0|r - English <-> Simplified Chinese")
+ print("|cff33ff99WoWInterpreter v2.2.1|r - English <-> Simplified Chinese")
  print("|cffffff00/wi <text>|r - translate text")
  print("|cffffff00/wi last|r - translate latest received message")
  print("|cffffff00/wi list|r - choose a recent message")

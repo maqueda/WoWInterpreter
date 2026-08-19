@@ -1132,7 +1132,7 @@ def _grab_kt07_region():
  return im
 
 def worker():
- print("WoWInterpreter Bridge 2.2.0",flush=True)
+ print("WoWInterpreter Bridge 2.2.1",flush=True)
  print("KT08 pilot transport with safe KT07 fallback.",flush=True)
 
  duplicates=KT07DuplicateSuppressor()
